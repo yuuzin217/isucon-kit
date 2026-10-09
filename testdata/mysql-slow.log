@@ -1,0 +1,15 @@
+# Time: 2026-10-09T00:00:01.000000Z
+# User@Host: isucon[isucon] @ localhost []  Id: 1
+# Query_time: 1.200000  Lock_time: 0.000100 Rows_sent: 1  Rows_examined: 1000
+SET timestamp=1690000000;
+SELECT * FROM items WHERE id=1;
+# Time: 2026-10-09T00:00:02.000000Z
+# User@Host: isucon[isucon] @ localhost []  Id: 1
+# Query_time: 0.500000  Lock_time: 0.000100 Rows_sent: 1  Rows_examined: 800
+SET timestamp=1690000001;
+SELECT * FROM items WHERE id=2;
+# Time: 2026-10-09T00:00:03.000000Z
+# User@Host: isucon[isucon] @ localhost []  Id: 1
+# Query_time: 0.300000  Lock_time: 0.000000 Rows_sent: 10  Rows_examined: 10
+SET timestamp=1690000002;
+SELECT id FROM categories WHERE name='a';

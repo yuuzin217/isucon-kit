@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "data_dir": "./.isucon-kit",
+  "ssh": {
+    "user": "isucon",
+    "identity_file": "",
+    "port": 22,
+    "connect_timeout_seconds": 10
+  },
+  "hosts": [
+    {
+      "name": "web1",
+      "address": "example.invalid",
+      "access_logs": [
+        {
+          "path": "/var/log/nginx/access.log",
+          "format": "json"
+        }
+      ],
+      "slow_logs": [],
+      "services": [
+        "nginx"
+      ]
+    }
+  ],
+  "collection": {
+    "max_bytes_per_file": 33554432
+  },
+  "route_patterns": [
+    {
+      "pattern": "^/api/items/[0-9]+$",
+      "replacement": "/api/items/:id"
+    }
+  ]
+}

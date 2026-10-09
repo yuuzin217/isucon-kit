@@ -1,0 +1,4 @@
+{"time":"2026-10-09T00:00:00+00:00","method":"GET","uri":"/api/items/1?x=1","status":200,"body_bytes":10,"request_time":0.100}
+{"time":"2026-10-09T00:00:01+00:00","method":"GET","uri":"/api/items/2","status":200,"body_bytes":10,"request_time":0.300}
+{"time":"2026-10-09T00:00:02+00:00","method":"POST","uri":"/api/items/3?y=2","status":201,"body_bytes":10,"request_time":0.200}
+{"time":"2026-10-09T00:00:03+00:00","method":"GET","uri":"/health","status":200,"body_bytes":2,"request_time":0.010}

@@ -1,0 +1,9 @@
+# 個人用の設定・取得データ・鍵・データベースは追跡しない
+isucon-kit.json
+.isucon-kit/
+*.db
+*.db-wal
+*.db-shm
+
+# ビルド成果物
+/isucon-kit
