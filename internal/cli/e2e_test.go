@@ -130,6 +130,82 @@ exit 1
 	}
 }
 
+func TestScoreSetPassRequiresValue(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.jsonl"), []byte("{\"time\":\"t\",\"method\":\"GET\",\"uri\":\"/health\",\"status\":200,\"request_time\":0.1}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(wd) })
+	if code := Main([]string{"init"}, ioDiscard(), ioDiscard()); code != 0 {
+		t.Fatal("init")
+	}
+	var out, errb strings.Builder
+	if code := Main([]string{"import", "--access", "a.jsonl", "--access-format", "json", "--label", "score"}, &out, &errb); code != 0 {
+		t.Fatalf("import %s", errb.String())
+	}
+	run := runID(out.String())
+	if run == "" {
+		t.Fatal(out.String())
+	}
+
+	errb.Reset()
+	if code := Main([]string{"score", "set", "--run", run, "--status", "pass"}, ioDiscard(), &errb); code != 2 {
+		t.Fatalf("pass 値なしの終了コード %d: %s", code, errb.String())
+	}
+	if !strings.Contains(errb.String(), "--value") {
+		t.Fatalf("案内がありません: %s", errb.String())
+	}
+
+	errb.Reset()
+	if code := Main([]string{"score", "set", "--run", run, "--status", "pass", "--value", "-1"}, ioDiscard(), &errb); code != 2 {
+		t.Fatalf("負数の終了コード %d", code)
+	}
+	errb.Reset()
+	if code := Main([]string{"score", "set", "--run", run, "--status", "fail", "--value", "-1"}, ioDiscard(), &errb); code != 2 {
+		t.Fatalf("fail の負数 %d", code)
+	}
+
+	out.Reset()
+	errb.Reset()
+	if code := Main([]string{"score", "set", "--run", run, "--status", "pass", "--value", "0"}, &out, &errb); code != 0 {
+		t.Fatalf("0点: %s", errb.String())
+	}
+	out.Reset()
+	if code := Main([]string{"report", "--run", run}, &out, &errb); code != 0 {
+		t.Fatal(errb.String())
+	}
+	if !strings.Contains(out.String(), "スコア: 0\n") || !strings.Contains(out.String(), "判定: pass") {
+		t.Fatalf("0点を未計測と混同しています:\n%s", out.String())
+	}
+
+	out.Reset()
+	errb.Reset()
+	if code := Main([]string{"score", "set", "--run", run, "--status", "fail"}, &out, &errb); code != 0 {
+		t.Fatalf("fail 値なし: %s", errb.String())
+	}
+	out.Reset()
+	if code := Main([]string{"report", "--run", run}, &out, &errb); code != 0 {
+		t.Fatal(errb.String())
+	}
+	if !strings.Contains(out.String(), "スコア: 未計測\n") || !strings.Contains(out.String(), "判定: fail") {
+		t.Fatalf("fail の省略:\n%s", out.String())
+	}
+
+	errb.Reset()
+	if code := Main([]string{"score", "set", "--run", run, "--status", "unknown"}, ioDiscard(), &errb); code != 0 {
+		t.Fatalf("unknown 値なし: %s", errb.String())
+	}
+}
+
+func ioDiscard() *strings.Builder { return &strings.Builder{} }
+
 func TestGitignoreCoversPrivateData(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", ".gitignore"))
 	if err != nil {

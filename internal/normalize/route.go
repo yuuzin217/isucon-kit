@@ -2,6 +2,7 @@
 package normalize
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/yuuzin217/isucon-kit/internal/config"
@@ -79,13 +80,10 @@ func stripQuery(uri string) string {
 }
 
 func sortEndpoints(items []model.EndpointStat) {
-	for i := 1; i < len(items); i++ {
-		j := i
-		for j > 0 && lessEndpoint(items[j], items[j-1]) {
-			items[j], items[j-1] = items[j-1], items[j]
-			j--
-		}
-	}
+	// total、count、method、route の順で決まる。完全同値は入力順を保つ。
+	sort.SliceStable(items, func(i, j int) bool {
+		return lessEndpoint(items[i], items[j])
+	})
 }
 
 func lessEndpoint(a, b model.EndpointStat) bool {

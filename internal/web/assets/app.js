@@ -131,7 +131,28 @@ function renderDetail(detail) {
   el("empty").hidden = true;
 }
 
+function resetCompareTables() {
+  clearTable("endpoint-diff-body");
+  clearTable("query-diff-body");
+  el("endpoint-diff-wrap").hidden = true;
+  el("query-diff-wrap").hidden = true;
+  text(el("endpoint-compare"), "");
+  text(el("query-compare"), "");
+}
+
+function showDiff(wrapId, bodyId, rows, cellsFor) {
+  const list = (rows || []).slice(0, 10);
+  clearTable(bodyId);
+  if (list.length === 0) {
+    el(wrapId).hidden = true;
+    return;
+  }
+  el(wrapId).hidden = false;
+  list.forEach((row) => addRow(bodyId, cellsFor(row), 0));
+}
+
 async function renderCompare() {
+  resetCompareTables();
   if (!state.current || !state.baseID || state.baseID === state.current.run.id) {
     text(el("score-delta"), "-");
     return;
@@ -144,6 +165,33 @@ async function renderCompare() {
     text(el("score-delta"), String(cmp.score_delta) + " / " + pct);
   }
   text(el("score-note"), "比較: base " + cmp.base_id + " → head " + cmp.head_id + (state.current.run.note ? " / メモ: " + state.current.run.note : ""));
+  if (!cmp.endpoints_comparable) {
+    text(el("endpoint-compare"), cmp.endpoints_reason || "エンドポイントは比較不能です");
+  } else if ((cmp.endpoints || []).length === 0) {
+    text(el("endpoint-compare"), "比較可能なエンドポイント差分はありません");
+  } else {
+    text(el("endpoint-compare"), "Endpoint 差分（表示中 − base）累積秒。上位10件。");
+    showDiff("endpoint-diff-wrap", "endpoint-diff-body", cmp.endpoints, (row) => [
+      row.method || "",
+      row.route || "",
+      seconds(row.base_total_seconds),
+      seconds(row.head_total_seconds),
+      seconds(row.delta_total_seconds),
+    ]);
+  }
+  if (!cmp.queries_comparable) {
+    text(el("query-compare"), cmp.queries_reason || "SQL は比較不能です");
+  } else if ((cmp.queries || []).length === 0) {
+    text(el("query-compare"), "比較可能な SQL 差分はありません");
+  } else {
+    text(el("query-compare"), "SQL 差分（表示中 − base）累積秒。上位10件。");
+    showDiff("query-diff-wrap", "query-diff-body", cmp.queries, (row) => [
+      row.fingerprint || "",
+      seconds(row.base_total_seconds),
+      seconds(row.head_total_seconds),
+      seconds(row.delta_total_seconds),
+    ]);
+  }
 }
 
 async function loadAll() {

@@ -1,10 +1,13 @@
 package normalize
 
 import (
+	"fmt"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/yuuzin217/isucon-kit/internal/config"
+	"github.com/yuuzin217/isucon-kit/internal/model"
 )
 
 func testConfig(t *testing.T) *config.File {
@@ -53,6 +56,61 @@ func TestMergeRouteQueryAndP95(t *testing.T) {
 	}
 	if !items || !health {
 		t.Fatalf("route が不足: %+v", got)
+	}
+}
+
+func TestSortEndpointsOrderAndScale(t *testing.T) {
+	items := []model.EndpointStat{
+		{Method: "POST", Route: "/b", Count: 1, TotalSeconds: 1},
+		{Method: "GET", Route: "/b", Count: 2, TotalSeconds: 5},
+		{Method: "GET", Route: "/a", Count: 9, TotalSeconds: 5},
+		{Method: "GET", Route: "/a", Count: 1, TotalSeconds: 5},
+		{Method: "GET", Route: "/m", Count: 3, TotalSeconds: 2},
+		{Method: "GET", Route: "/c", Count: 3, TotalSeconds: 2},
+		{Method: "GET", Route: "/z", Count: 1, TotalSeconds: 0},
+	}
+	sortEndpoints(items)
+	got := make([]string, len(items))
+	for i, ep := range items {
+		got[i] = fmt.Sprintf("%s %s %d %.0f", ep.Method, ep.Route, ep.Count, ep.TotalSeconds)
+	}
+	want := []string{
+		"GET /a 9 5",
+		"GET /b 2 5",
+		"GET /a 1 5",
+		"GET /c 3 2",
+		"GET /m 3 2",
+		"POST /b 1 1",
+		"GET /z 1 0",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("%v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("順位 %d: got %s want %s\n全部: %v", i, got[i], want[i], got)
+		}
+	}
+
+	const n = 40000
+	large := make([]model.EndpointStat, n)
+	for i := 0; i < n; i++ {
+		large[i] = model.EndpointStat{
+			Method:       []string{"GET", "POST", "PUT"}[i%3],
+			Route:        fmt.Sprintf("/id/%06d", (i*97)%n),
+			Count:        (i * 13) % 50,
+			TotalSeconds: float64((i * 29) % 5000),
+		}
+	}
+	start := time.Now()
+	sortEndpoints(large)
+	if elapsed := time.Since(start); elapsed > 1500*time.Millisecond {
+		t.Fatalf("40000件のソートが遅すぎます: %s", elapsed)
+	}
+	for i := 1; i < len(large); i++ {
+		if lessEndpoint(large[i], large[i-1]) {
+			t.Fatalf("順位が壊れています: %d %+v %+v", i, large[i-1], large[i])
+		}
 	}
 }
 

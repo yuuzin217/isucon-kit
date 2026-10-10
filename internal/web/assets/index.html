@@ -40,6 +40,13 @@
       </table>
     </div>
     <p id="endpoint-state"></p>
+    <p id="endpoint-compare" class="hint"></p>
+    <div class="table-wrap" id="endpoint-diff-wrap" hidden>
+      <table>
+        <thead><tr><th>Method</th><th>Path</th><th>Base</th><th>Head</th><th>Delta</th></tr></thead>
+        <tbody id="endpoint-diff-body"></tbody>
+      </table>
+    </div>
   </section>
   <section id="queries" hidden>
     <h2>Slow Queries</h2>
@@ -51,6 +58,13 @@
       </table>
     </div>
     <p id="query-state"></p>
+    <p id="query-compare" class="hint"></p>
+    <div class="table-wrap" id="query-diff-wrap" hidden>
+      <table>
+        <thead><tr><th>Fingerprint</th><th>Base</th><th>Head</th><th>Delta</th></tr></thead>
+        <tbody id="query-diff-body"></tbody>
+      </table>
+    </div>
   </section>
   <section id="history" hidden>
     <h2>History</h2>

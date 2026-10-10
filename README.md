@@ -88,7 +88,7 @@ go run ./cmd/isucon-kit import \
 | `import` | ローカルログをスナップショットへコピーする |
 | `collect --label TEXT` | 設定済みホストからログの末尾を読み取り専用で取得する |
 | `analyze --run ID` | その run の集計を置き換える。再実行しても二重加算しない |
-| `score set` | スコア、PASS/FAIL/UNKNOWN、メモ、git SHA を記録する |
+| `score set` | スコア、判定、メモ、git SHA を記録する。pass は `--value` 必須（0 以上）。fail と unknown は省略すると未計測 |
 | `runs` | 新しい順の一覧 |
 | `report --run ID` | 要約。`--format text` または `json` |
 | `diff --base ID --head ID` | スコアと累積時間の差分 |

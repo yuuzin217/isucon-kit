@@ -304,7 +304,7 @@ func cmdScore(args []string, stdout, stderr io.Writer) int {
 	configPath := fs.String("config", "isucon-kit.json", "設定ファイル")
 	runID := fs.String("run", "", "run ID")
 	status := fs.String("status", "", "pass, fail, unknown")
-	value := fs.String("value", "", "非負整数。省略すると未計測")
+	value := fs.String("value", "", "0以上の整数。pass では必須。fail と unknown では省略すると未計測")
 	note := fs.String("note", "", "メモ")
 	gitSHA := fs.String("git-sha", "", "記録するコミット SHA")
 	if err := fs.Parse(args[1:]); err != nil {
@@ -314,11 +314,15 @@ func cmdScore(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "--run と --status pass|fail|unknown が必要です")
 		return 2
 	}
+	if *status == model.BenchmarkPass && *value == "" {
+		fmt.Fprintln(stderr, "status が pass のときは --value が必要です。0 以上の整数を指定してください")
+		return 2
+	}
 	var score *int
 	if *value != "" {
 		n, err := strconv.Atoi(*value)
 		if err != nil || n < 0 {
-			fmt.Fprintln(stderr, "--value は 0 以上の整数です。未計測は --value を省略してください")
+			fmt.Fprintln(stderr, "--value は 0 以上の整数です。fail と unknown で未計測にする場合は --value を省略してください")
 			return 2
 		}
 		score = &n
