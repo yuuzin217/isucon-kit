@@ -1,0 +1,21 @@
+name: browser-e2e
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  gui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: browser-actions/setup-chrome@v1
+      - name: GUI regression
+        run: go test -tags browser_e2e ./internal/web/ -count=1 -timeout 120s

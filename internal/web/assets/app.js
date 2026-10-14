@@ -1,6 +1,6 @@
 "use strict";
 
-const state = { runs: [], current: null, baseID: "" };
+const state = { runs: [], current: null, baseID: "", compareOff: false };
 
 const el = (id) => document.getElementById(id);
 
@@ -204,6 +204,7 @@ async function loadAll() {
     if (state.runs.length === 0) {
       state.current = null;
       state.baseID = "";
+      state.compareOff = false;
       ["status", "score", "endpoints", "queries", "history"].forEach((id) => setVisible(id, false));
       el("empty").hidden = false;
       text(el("run-meta"), "計測なし");
@@ -213,11 +214,14 @@ async function loadAll() {
     const id = still ? selected : state.runs[0].id;
     const detail = await getJSON("/api/runs/" + encodeURIComponent(id));
     renderDetail(detail);
-    if (baseID && state.runs.some((run) => run.id === baseID) && baseID !== id) {
+    // compareOff は「比較しない」をユーザーが選んだ状態。初回だけ次点 run を自動選択する。
+    if (state.compareOff) {
+      state.baseID = "";
+    } else if (baseID && baseID !== id && state.runs.some((run) => run.id === baseID)) {
       state.baseID = baseID;
-    } else if (!state.baseID && state.runs.length > 1 && state.runs[1].id !== id) {
+    } else if (!baseID && state.runs.length > 1 && state.runs[1].id !== id) {
       state.baseID = state.runs[1].id;
-    } else if (state.baseID === id) {
+    } else {
       state.baseID = "";
     }
     renderRuns();
@@ -241,6 +245,7 @@ el("run-select").addEventListener("change", async (ev) => {
 });
 el("base-select").addEventListener("change", async (ev) => {
   state.baseID = ev.target.value;
+  state.compareOff = state.baseID === "";
   try {
     showError("");
     await renderCompare();

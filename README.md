@@ -49,7 +49,13 @@ go test ./...
 go vet ./...
 ```
 
-`go test` は alp と pt-query-digest が PATH に無くても、同梱の機械可読出力と fake コマンドで通ります。実バイナリがある環境では、fixture に対する実ツールのテストも実行します。
+`go test` は alp と pt-query-digest が PATH に無くても、同梱の機械可読出力と fake コマンドで通ります。実バイナリがある環境では、fixture に対する実ツールのテストも実行します。Chrome と Node.js は不要です。
+
+ブラウザでの run 切替、比較、Refresh はタグ `browser_e2e` のときだけ実行します。Google Chrome（`google-chrome` または `google-chrome-stable`）と Node.js が必要です。
+
+```sh
+go test -tags browser_e2e ./internal/web/ -count=1 -timeout 120s
+```
 
 ## 最短の手順
 

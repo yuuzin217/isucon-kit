@@ -1,3 +1,5 @@
+//go:build browser_e2e
+
 package web
 
 import (
@@ -39,7 +41,10 @@ func TestGUICompareRefreshKeepsSelection(t *testing.T) {
 		chrome, err = exec.LookPath("google-chrome-stable")
 	}
 	if err != nil {
-		t.Fatal("google-chrome が無く、GUI 回帰を実行できません")
+		t.Fatal("google-chrome または google-chrome-stable が必要です")
+	}
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Fatal("node が必要です")
 	}
 	st := newStore(t)
 	seedComparable(t, st, "run-old", "old-run", 100, time.Date(2026, 10, 9, 0, 0, 0, 0, time.UTC), 1.0, 1.0)
@@ -82,7 +87,7 @@ func TestGUICompareRefreshKeepsSelection(t *testing.T) {
 	})
 	port := waitDevtools(t, logs)
 	page := "http://" + ln.Addr().String() + "/"
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "node", script, "http://127.0.0.1:"+port, page).CombinedOutput()
 	if err != nil {
@@ -162,7 +167,7 @@ const pageURL = process.argv[3];
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 async function main() {
-  const timer = setTimeout(() => { console.error("script timeout"); process.exit(1); }, 20000);
+  const timer = setTimeout(() => { console.error("script timeout"); process.exit(1); }, 25000);
   const ver = await fetch(browserHTTP + "/json/version").then((r) => r.json());
   console.error("version", ver.Browser);
   const created = await fetch(browserHTTP + "/json/new?" + encodeURIComponent(pageURL), { method: "PUT" }).then(async (r) => {
@@ -225,6 +230,11 @@ async function main() {
   await waitFor("document.getElementById('score-value').textContent === '100' && document.getElementById('run-select').value === 'run-old' && document.getElementById('endpoint-diff-body').innerText.includes('/old') && document.getElementById('base-select').value === 'run-new'");
   await evalValue("document.getElementById('base-select').value = 'run-bad'; document.getElementById('base-select').dispatchEvent(new Event('change')); true");
   await waitFor("document.getElementById('endpoint-compare').textContent.includes('比較不能') && document.getElementById('query-compare').textContent.includes('比較不能') && document.getElementById('endpoint-diff-wrap').hidden === true");
+  await evalValue("document.getElementById('base-select').value = ''; document.getElementById('base-select').dispatchEvent(new Event('change')); true");
+  await waitFor("document.getElementById('score-delta').textContent === '-' && document.getElementById('endpoint-diff-wrap').hidden === true && document.getElementById('endpoint-compare').textContent === ''");
+  await evalValue("document.getElementById('refresh').click(); true");
+  await sleep(300);
+  await waitFor("document.getElementById('score-value').textContent === '100' && document.getElementById('run-select').value === 'run-old' && document.getElementById('base-select').value === '' && document.getElementById('score-delta').textContent === '-' && document.getElementById('endpoint-diff-wrap').hidden === true");
   if (ver.Browser === "") {
     throw new Error("browser version empty");
   }
