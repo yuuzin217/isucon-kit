@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>isucon-kit</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <div>
+      <h1>isucon-kit</h1>
+      <p id="run-meta">読み込み中</p>
+    </div>
+    <button id="refresh" type="button">Refresh</button>
+  </header>
+  <p id="error" class="error" hidden></p>
+  <p id="empty" class="empty" hidden>まだ計測がありません。collect/import → analyze → score set</p>
+  <section id="status" hidden>
+    <p id="scope"></p>
+    <p id="timing"></p>
+    <p id="sides"></p>
+  </section>
+  <section id="score" hidden>
+    <h2>Score</h2>
+    <div class="cards">
+      <div><span>選択中</span><strong id="score-value">未計測</strong></div>
+      <div><span>判定</span><strong id="score-status">unknown</strong></div>
+      <div><span>差分</span><strong id="score-delta">-</strong></div>
+    </div>
+    <p id="score-note"></p>
+  </section>
+  <section id="endpoints" hidden>
+    <h2>Slow Endpoints</h2>
+    <p class="hint">累積秒数の降順 Top10。時間の単位は秒。p95 は単一の集計行だけのとき表示します。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Method</th><th>Path</th><th>Count</th><th>Total</th><th>Avg</th></tr></thead>
+        <tbody id="endpoint-body"></tbody>
+      </table>
+    </div>
+    <p id="endpoint-state"></p>
+    <p id="endpoint-compare" class="hint"></p>
+    <div class="table-wrap" id="endpoint-diff-wrap" hidden>
+      <table>
+        <thead><tr><th>Method</th><th>Path</th><th>Base</th><th>Head</th><th>Delta</th></tr></thead>
+        <tbody id="endpoint-diff-body"></tbody>
+      </table>
+    </div>
+  </section>
+  <section id="queries" hidden>
+    <h2>Slow Queries</h2>
+    <p class="hint">匿名化フィンガープリントの累積秒数降順 Top10。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Fingerprint</th><th>Count</th><th>Total</th><th>Avg</th></tr></thead>
+        <tbody id="query-body"></tbody>
+      </table>
+    </div>
+    <p id="query-state"></p>
+    <p id="query-compare" class="hint"></p>
+    <div class="table-wrap" id="query-diff-wrap" hidden>
+      <table>
+        <thead><tr><th>Fingerprint</th><th>Base</th><th>Head</th><th>Delta</th></tr></thead>
+        <tbody id="query-diff-body"></tbody>
+      </table>
+    </div>
+  </section>
+  <section id="history" hidden>
+    <h2>History</h2>
+    <div class="selectors">
+      <label>表示 run
+        <select id="run-select"></select>
+      </label>
+      <label>比較 base
+        <select id="base-select"></select>
+      </label>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>時刻</th><th>ラベル</th><th>Score</th><th>判定</th></tr></thead>
+        <tbody id="history-body"></tbody>
+      </table>
+    </div>
+  </section>
+  <script src="/app.js"></script>
+</body>
+</html>

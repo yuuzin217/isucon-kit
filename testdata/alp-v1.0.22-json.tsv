@@ -1,0 +1,5 @@
+Count	Method	Uri	Sum	Avg	Max	P95
+1	GET	/api/items/2	0.300	0.300	0.300	0.300
+1	POST	/api/items/3	0.200	0.200	0.200	0.200
+1	GET	/api/items/1	0.100	0.100	0.100	0.100
+1	GET	/health	0.010	0.010	0.010	0.010
