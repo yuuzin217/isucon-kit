@@ -24,7 +24,7 @@ type gateRunner struct {
 	gate   chan struct{}
 	stdout string
 	err    error
-	onRun  func()
+	onRun  func(name string)
 }
 
 func (g *gateRunner) Run(ctx context.Context, name string, args ...string) ([]byte, []byte, error) {
@@ -33,7 +33,7 @@ func (g *gateRunner) Run(ctx context.Context, name string, args ...string) ([]by
 	gate, stdout, err, hook := g.gate, g.stdout, g.err, g.onRun
 	g.mu.Unlock()
 	if hook != nil {
-		hook()
+		hook(name)
 	}
 	if gate != nil {
 		select {
@@ -198,7 +198,7 @@ func TestLocalCycleSuccessFailureAndSingleFlight(t *testing.T) {
 	cfg.Local = &config.LocalPractice{WorkDir: dir, Target: "cycle", ScoreFile: filepath.Join(dir, "score.json"), TimeoutSeconds: 5}
 	gate := make(chan struct{})
 	scorePath := filepath.Join(dir, "score.json")
-	runner := &gateRunner{gate: gate, stdout: "ok\n-----BEGIN OPENSSH PRIVATE KEY----- secret-material\n", onRun: func() {
+	runner := &gateRunner{gate: gate, stdout: "ok\n-----BEGIN OPENSSH PRIVATE KEY----- secret-material\n", onRun: func(string) {
 		if err := os.WriteFile(scorePath, []byte("{\"score\":42,\"status\":\"pass\"}\n"), 0o600); err != nil {
 			panic(err)
 		}
@@ -253,7 +253,7 @@ func TestLocalCycleSuccessFailureAndSingleFlight(t *testing.T) {
 	failDir := practiceDir(t, `{"status":"fail"}`)
 	cfg.Local.WorkDir = failDir
 	cfg.Local.ScoreFile = filepath.Join(failDir, "score.json")
-	failRunner := &gateRunner{stdout: "bench failed recorded\n", onRun: func() {
+	failRunner := &gateRunner{stdout: "bench failed recorded\n", onRun: func(string) {
 		if err := os.WriteFile(cfg.Local.ScoreFile, []byte("{\"status\":\"fail\"}\n"), 0o600); err != nil {
 			panic(err)
 		}

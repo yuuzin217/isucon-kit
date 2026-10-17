@@ -47,6 +47,59 @@ func TestRunGroupCapsOutput(t *testing.T) {
 	}
 }
 
+func TestRunGroupKeepsTailMarker(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	seen := make(chan struct{}, 1)
+	finished := make(chan struct{})
+	var stdout []byte
+	var truncated bool
+	var runErr error
+	go func() {
+		stdout, _, truncated, runErr = RunGroupProgress(ctx, "sh", 64*1024, func(text string) {
+			if strings.Contains(text, "marker-at-end") {
+				select {
+				case seen <- struct{}{}:
+				default:
+				}
+			}
+		}, "-c", "echo HEAD-MARKER; dd if=/dev/zero bs=1024 count=300 2>/dev/null | tr '\\0' 'A'; echo marker-at-end; sleep 1")
+		close(finished)
+	}()
+	select {
+	case <-seen:
+	case <-time.After(6 * time.Second):
+		t.Fatal("実行中に marker-at-end が見えません")
+	}
+	select {
+	case <-finished:
+		t.Fatal("マーカーはプロセス終了後にしか出ていません")
+	case <-time.After(200 * time.Millisecond):
+	}
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("コマンドが終わりません")
+	}
+	if runErr != nil {
+		t.Fatal(runErr)
+	}
+	text := string(stdout)
+	if !truncated || !strings.Contains(text, "marker-at-end") || !strings.HasSuffix(strings.TrimSpace(text), "marker-at-end") {
+		t.Fatalf("終了後の末尾: truncated=%v tail=%q", truncated, tail(text, 80))
+	}
+	if strings.Contains(text, "HEAD-MARKER") {
+		t.Fatal("先頭の大量出力を残しています")
+	}
+}
+
+func tail(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[len(s)-n:]
+}
+
 func TestRunGroupSharesCaptureBudget(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

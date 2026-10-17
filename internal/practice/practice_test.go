@@ -151,6 +151,47 @@ func TestMakeTimeoutKillsRecipeChildren(t *testing.T) {
 	t.Fatalf("make の子プロセス %d が残っています", pid)
 }
 
+func TestAppendSpanTakesOnlyGrowth(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "access.log")
+	if err := os.WriteFile(path, []byte("old-line\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := Observe(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("new-line\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	after, err := Observe(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	offset, n, kind, ok := AppendSpan(before, after)
+	if !ok || kind != "append" || offset != int64(len("old-line\n")) || n != int64(len("new-line\n")) {
+		t.Fatalf("増分: offset=%d n=%d kind=%s ok=%v", offset, n, kind, ok)
+	}
+	if err := os.WriteFile(path, []byte("rotated\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rotated, err := Observe(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, n, kind, ok = AppendSpan(after, rotated)
+	if !ok || kind == "append" || n != int64(len("rotated\n")) {
+		t.Fatalf("切り詰め: n=%d kind=%s ok=%v", n, kind, ok)
+	}
+}
+
 func TestReadScore(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "score.json")

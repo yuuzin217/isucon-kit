@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/yuuzin217/isucon-kit/internal/command"
@@ -109,6 +110,9 @@ type Artifact struct {
 	ModTime time.Time
 	Size    int64
 	Sum     [32]byte
+	Dev     uint64
+	Ino     uint64
+	HasID   bool
 }
 
 // Observe はファイルの更新時刻、サイズ、内容ハッシュを読む。無いファイルは Exists=false。
@@ -141,7 +145,37 @@ func Observe(path string) (Artifact, error) {
 	art.ModTime = info.ModTime()
 	art.Size = n
 	copy(art.Sum[:], h.Sum(nil))
+	if st, ok := info.Sys().(*syscall.Stat_t); ok {
+		art.Dev = uint64(st.Dev)
+		art.Ino = uint64(st.Ino)
+		art.HasID = true
+	}
 	return art, nil
+}
+
+// AppendSpan は同じファイルへの追記なら増分だけ、ローテーションや切り詰めなら全体を返す。
+// 更新が無いときは ok=false。
+func AppendSpan(before, after Artifact) (offset, n int64, kind string, ok bool) {
+	if !after.Exists || after.Size <= 0 {
+		return 0, 0, "", false
+	}
+	if !before.Exists || !sameID(before, after) {
+		return 0, after.Size, "replace", true
+	}
+	if after.Size < before.Size {
+		return 0, after.Size, "truncate", true
+	}
+	if after.Size > before.Size {
+		return before.Size, after.Size - before.Size, "append", true
+	}
+	if before.Sum != after.Sum || after.ModTime.After(before.ModTime) {
+		return 0, after.Size, "replace", true
+	}
+	return 0, 0, "", false
+}
+
+func sameID(a, b Artifact) bool {
+	return a.HasID && b.HasID && a.Dev == b.Dev && a.Ino == b.Ino
 }
 
 // Changed は実行後の成果物が、実行前と違う内容か新しい更新時刻を持つかを返す。

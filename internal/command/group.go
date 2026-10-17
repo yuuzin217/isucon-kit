@@ -91,14 +91,14 @@ func RunGroupProgress(ctx context.Context, name string, maxCapture int, progress
 	}
 	close(stop)
 	ticks.Wait()
-	stdout, stderr, truncated = capBuf.snapshot()
+	buf, truncated := capBuf.snapshot()
 	if progress != nil {
-		progress(FormatOutput(stdout, stderr, truncated))
+		progress(FormatOutput(buf, nil, truncated))
 	}
-	return stdout, stderr, truncated, err
+	return buf, nil, truncated, err
 }
 
-// FormatOutput は標準出力と標準エラーを、上限を超えたときだけ注記を付けて結合する。
+// FormatOutput は標準出力と標準エラーを結合する。上限を超えたときは先頭を捨てた旨を前に付ける。
 func FormatOutput(stdout, stderr []byte, truncated bool) string {
 	log := string(stdout)
 	if len(stderr) > 0 {
@@ -108,7 +108,7 @@ func FormatOutput(stdout, stderr []byte, truncated bool) string {
 		log += string(stderr)
 	}
 	if truncated {
-		log += "\n…出力が上限を超えたため以降を捨てました…\n"
+		log = "…先頭を省略しました…\n" + log
 	}
 	return log
 }
@@ -149,51 +149,43 @@ func killGroup(pid int) {
 
 type capture struct {
 	mu   sync.Mutex
-	out  []byte
-	err  []byte
+	buf  []byte
 	max  int
-	used int
 	more bool
 }
 
-func (c *capture) append(stdout bool, p []byte) {
+func (c *capture) append(p []byte) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.used >= c.max {
+	c.buf = append(c.buf, p...)
+	if len(c.buf) > c.max {
+		extra := len(c.buf) - c.max
+		next := make([]byte, c.max)
+		copy(next, c.buf[extra:])
+		c.buf = next
 		c.more = true
-		return
 	}
-	if c.used+len(p) > c.max {
-		p = p[:c.max-c.used]
-		c.more = true
-	}
-	if stdout {
-		c.out = append(c.out, p...)
-	} else {
-		c.err = append(c.err, p...)
-	}
-	c.used += len(p)
 }
 
-func (c *capture) snapshot() (out, errb []byte, more bool) {
+func (c *capture) snapshot() (buf []byte, more bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return append([]byte(nil), c.out...), append([]byte(nil), c.err...), c.more
+	return append([]byte(nil), c.buf...), c.more
 }
 
 func (c *capture) text() string {
-	out, errb, more := c.snapshot()
-	return FormatOutput(out, errb, more)
+	buf, more := c.snapshot()
+	return FormatOutput(buf, nil, more)
 }
 
-func readInto(r io.Reader, c *capture, stdout bool) {
+func readInto(r io.Reader, c *capture, _ bool) {
 	tmp := make([]byte, 32*1024)
 	for {
 		n, err := r.Read(tmp)
 		if n > 0 {
 			chunk := make([]byte, n)
 			copy(chunk, tmp[:n])
-			c.append(stdout, chunk)
+			c.append(chunk)
 		}
 		if err != nil {
 			return

@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -293,8 +295,8 @@ func (s *server) runLocal(ctx context.Context, done func()) {
 	_ = s.st.SaveExecution(ex)
 	var problems []string
 	runID := ""
-	accessPath, accessFresh, aerr := freshPath(local.AccessLog, before)
-	slowPath, slowFresh, serr := freshPath(local.SlowLog, before)
+	accessPart, aerr := logDelta("アクセスログ", local.AccessLog, before)
+	slowPart, serr := logDelta("スローログ", local.SlowLog, before)
 	if aerr != nil || serr != nil {
 		msg := aerr
 		if msg == nil {
@@ -305,18 +307,26 @@ func (s *server) runLocal(ctx context.Context, done func()) {
 		_ = s.st.SaveExecution(ex)
 		return
 	}
-	if local.AccessLog != "" && !accessFresh {
+	if local.AccessLog != "" && !accessPart.ok {
 		problems = append(problems, "アクセスログは今回の計測で更新されていないため取り込みません")
 	}
-	if local.SlowLog != "" && !slowFresh {
+	if local.SlowLog != "" && !slowPart.ok {
 		problems = append(problems, "スローログは今回の計測で更新されていないため取り込みません")
 	}
-	if accessPath != "" || slowPath != "" {
+	var scopeNotes []string
+	if accessPart.ok {
+		scopeNotes = append(scopeNotes, accessPart.note)
+	}
+	if slowPart.ok {
+		scopeNotes = append(scopeNotes, slowPart.note)
+	}
+	if accessPart.ok || slowPart.ok {
 		format := local.AccessFormat
 		if format == "" {
 			format = model.FormatJSON
 		}
-		res, ierr := collector.Import(ctx, s.st, s.opt.Config, accessPath, format, slowPath, "local-cycle")
+		scope := strings.Join(scopeNotes, " ")
+		res, ierr := collector.ImportDelta(ctx, s.st, s.opt.Config, accessPart.path, format, accessPart.offset, slowPart.path, slowPart.offset, "local-cycle", scope)
 		if res.RunID != "" {
 			runID = res.RunID
 			_ = s.st.SetRunMode(runID, model.ModeLocal)
@@ -412,15 +422,33 @@ func observeLocal(local *config.LocalPractice) (map[string]practice.Artifact, er
 	return out, nil
 }
 
-func freshPath(path string, before map[string]practice.Artifact) (string, bool, error) {
+type logPart struct {
+	path   string
+	offset int64
+	note   string
+	ok     bool
+}
+
+func logDelta(label, path string, before map[string]practice.Artifact) (logPart, error) {
 	if path == "" {
-		return "", false, nil
+		return logPart{}, nil
 	}
-	ok, err := fileFresh(path, before)
-	if err != nil || !ok {
-		return "", ok, err
+	after, err := practice.Observe(path)
+	if err != nil {
+		return logPart{}, err
 	}
-	return path, true, nil
+	offset, n, kind, ok := practice.AppendSpan(before[path], after)
+	if !ok {
+		return logPart{}, nil
+	}
+	note := fmt.Sprintf("%s: ファイル全体 %d バイト（新規またはローテーション）", label, n)
+	switch kind {
+	case "append":
+		note = fmt.Sprintf("%s: offset %d 以降の %d バイト（今回の増分）", label, offset, n)
+	case "truncate":
+		note = fmt.Sprintf("%s: 切り詰め後のファイル全体 %d バイト", label, n)
+	}
+	return logPart{path: path, offset: offset, note: note, ok: true}, nil
 }
 
 func fileFresh(path string, before map[string]practice.Artifact) (bool, error) {

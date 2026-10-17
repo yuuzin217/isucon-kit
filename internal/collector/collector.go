@@ -89,13 +89,29 @@ func Collect(ctx context.Context, st *store.Store, cfg *config.File, label strin
 	return finish(st, runID, label, ScopeTail, now, sources, files, okN, failN, dir)
 }
 
-// Import はローカルログをスナップショットへコピーする。SSH は使わない。
+// Import はローカルログをファイル全体としてスナップショットへコピーする。SSH は使わない。
 func Import(ctx context.Context, st *store.Store, cfg *config.File, accessPath, format, slowPath, label string) (Result, error) {
+	return importLocal(ctx, st, cfg, accessPath, format, 0, slowPath, 0, label, ScopeFull)
+}
+
+// ImportDelta は各ログの offset 以降だけをコピーする。offset 0 はファイル全体。
+// scope は今回の計測範囲を画面へ出すための説明である。
+func ImportDelta(ctx context.Context, st *store.Store, cfg *config.File, accessPath, format string, accessOffset int64, slowPath string, slowOffset int64, label, scope string) (Result, error) {
+	if scope == "" {
+		scope = ScopeFull
+	}
+	return importLocal(ctx, st, cfg, accessPath, format, accessOffset, slowPath, slowOffset, label, scope)
+}
+
+func importLocal(ctx context.Context, st *store.Store, cfg *config.File, accessPath, format string, accessOffset int64, slowPath string, slowOffset int64, label, scope string) (Result, error) {
 	if accessPath == "" && slowPath == "" {
 		return Result{}, fmt.Errorf("import には --access または --slowlog が必要です")
 	}
 	if accessPath != "" && format != model.FormatJSON && format != model.FormatLTSV {
 		return Result{}, fmt.Errorf("--access-format は json または ltsv です")
+	}
+	if accessOffset < 0 || slowOffset < 0 {
+		return Result{}, fmt.Errorf("ログの開始位置が不正です")
 	}
 	runID, err := id.New()
 	if err != nil {
@@ -110,8 +126,8 @@ func Import(ctx context.Context, st *store.Store, cfg *config.File, accessPath, 
 	var sources []model.Source
 	var files []manifestFile
 	okN, failN := 0, 0
-	add := func(kind, format, path, name string) {
-		src, mf := copyLocal(path, kind, format, name, dir, now)
+	add := func(kind, format, path, name string, offset int64) {
+		src, mf := copyLocal(path, offset, kind, format, name, dir, now)
 		sources = append(sources, src)
 		files = append(files, mf)
 		if src.Status == model.SourceOK {
@@ -121,13 +137,13 @@ func Import(ctx context.Context, st *store.Store, cfg *config.File, accessPath, 
 		}
 	}
 	if accessPath != "" {
-		add(model.KindAccess, format, accessPath, "local-access.log")
+		add(model.KindAccess, format, accessPath, "local-access.log", accessOffset)
 	}
 	if slowPath != "" {
-		add(model.KindSlow, model.FormatMySQL, slowPath, "local-slow.log")
+		add(model.KindSlow, model.FormatMySQL, slowPath, "local-slow.log", slowOffset)
 	}
 	_ = ctx
-	return finish(st, runID, label, ScopeFull, now, sources, files, okN, failN, dir)
+	return finish(st, runID, label, scope, now, sources, files, okN, failN, dir)
 }
 
 func finish(st *store.Store, runID, label, scope string, now time.Time, sources []model.Source, files []manifestFile, okN, failN int, dir string) (Result, error) {
@@ -241,7 +257,7 @@ func fetchOne(ctx context.Context, runner command.Runner, cfg *config.File, host
 	return src, mf
 }
 
-func copyLocal(path, kind, format, name, dir string, now time.Time) (model.Source, manifestFile) {
+func copyLocal(path string, offset int64, kind, format, name, dir string, now time.Time) (model.Source, manifestFile) {
 	src := model.Source{
 		HostName:       "local",
 		Kind:           kind,
@@ -268,6 +284,22 @@ func copyLocal(path, kind, format, name, dir string, now time.Time) (model.Sourc
 		src.AnalysisError = src.Error
 		mf.Error = src.Error
 		return src, mf
+	}
+	if offset > info.Size() {
+		src.Status = model.SourceFailed
+		src.Error = fmt.Sprintf("ログの開始位置 %d がファイルサイズ %d を超えています", offset, info.Size())
+		src.AnalysisError = src.Error
+		mf.Error = src.Error
+		return src, mf
+	}
+	if offset > 0 {
+		if _, err := in.Seek(offset, io.SeekStart); err != nil {
+			src.Status = model.SourceFailed
+			src.Error = fmt.Sprintf("ログの開始位置へ移動できません: %v", err)
+			src.AnalysisError = src.Error
+			mf.Error = src.Error
+			return src, mf
+		}
 	}
 	outPath := filepath.Join(dir, name)
 	out, err := os.OpenFile(outPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)

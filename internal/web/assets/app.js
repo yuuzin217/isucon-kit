@@ -255,6 +255,7 @@ async function renderDetail(detail) {
   const run = detail.run;
   text(el("run-meta"), "選択中: " + (run.label || run.id) + " / " + run.created_at);
   text(el("score-time"), "計測日時: " + (run.created_at || "-"));
+  text(el("log-range"), run.collection_scope ? "ログ範囲: " + run.collection_scope : "");
   text(el("score-value"), scoreText(run.score));
   text(el("score-status"), statusText(run.benchmark_status));
   text(el("score-note"), run.note ? "メモ: " + run.note : "");
@@ -427,6 +428,7 @@ async function loadAll() {
       el("empty").hidden = false;
       text(el("run-meta"), "このモードの計測はまだありません");
       text(el("score-value"), "未計測");
+      text(el("log-range"), "");
       clearTable("endpoint-body");
       clearTable("query-body");
       clearTable("history-body");
