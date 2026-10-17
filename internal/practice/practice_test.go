@@ -1,6 +1,7 @@
 package practice
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -175,9 +176,9 @@ func TestAppendSpanTakesOnlyGrowth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	offset, n, kind, ok := AppendSpan(before, after)
-	if !ok || kind != "append" || offset != int64(len("old-line\n")) || n != int64(len("new-line\n")) {
-		t.Fatalf("増分: offset=%d n=%d kind=%s ok=%v", offset, n, kind, ok)
+	offset, n, kind, ok, err := AppendSpan(before, after)
+	if err != nil || !ok || kind != "append" || offset != int64(len("old-line\n")) || n != int64(len("new-line\n")) {
+		t.Fatalf("増分: offset=%d n=%d kind=%s ok=%v err=%v", offset, n, kind, ok, err)
 	}
 	if err := os.WriteFile(path, []byte("rotated\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -186,9 +187,55 @@ func TestAppendSpanTakesOnlyGrowth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, n, kind, ok = AppendSpan(after, rotated)
-	if !ok || kind == "append" || n != int64(len("rotated\n")) {
-		t.Fatalf("切り詰め: n=%d kind=%s ok=%v", n, kind, ok)
+	_, n, kind, ok, err = AppendSpan(after, rotated)
+	if err != nil || !ok || kind == "append" || n != int64(len("rotated\n")) {
+		t.Fatalf("切り詰め: n=%d kind=%s ok=%v err=%v", n, kind, ok, err)
+	}
+}
+
+func TestAppendSpanDetectsTruncateRewrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "access.log")
+	beforeBody := bytes.Repeat([]byte("A"), 5*1024)
+	if err := os.WriteFile(path, beforeBody, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := Observe(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(bytes.Repeat([]byte("B"), 5*1024)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	appended, err := Observe(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	offset, n, kind, ok, err := AppendSpan(before, appended)
+	if err != nil || !ok || kind != "append" || offset != 5*1024 || n != 5*1024 {
+		t.Fatalf("通常の追記: offset=%d n=%d kind=%s ok=%v err=%v", offset, n, kind, ok, err)
+	}
+	rewritten := bytes.Repeat([]byte("C"), 10*1024)
+	if err := os.WriteFile(path, rewritten, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	after, err := Observe(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sameID(before, after) {
+		t.Fatal("テストでは同じ inode のまま切り詰めています")
+	}
+	offset, n, kind, ok, err = AppendSpan(before, after)
+	if err != nil || !ok || kind != "rewrite" || offset != 0 || n != 10*1024 {
+		t.Fatalf("再作成: offset=%d n=%d kind=%s ok=%v err=%v", offset, n, kind, ok, err)
 	}
 }
 

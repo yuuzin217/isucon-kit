@@ -154,24 +154,47 @@ func Observe(path string) (Artifact, error) {
 }
 
 // AppendSpan は同じファイルへの追記なら増分だけ、ローテーションや切り詰めなら全体を返す。
+// 同じ inode でサイズが増えても、先頭が前回の内容と違うときは再作成とみなす。
 // 更新が無いときは ok=false。
-func AppendSpan(before, after Artifact) (offset, n int64, kind string, ok bool) {
+func AppendSpan(before, after Artifact) (offset, n int64, kind string, ok bool, err error) {
 	if !after.Exists || after.Size <= 0 {
-		return 0, 0, "", false
+		return 0, 0, "", false, nil
 	}
 	if !before.Exists || !sameID(before, after) {
-		return 0, after.Size, "replace", true
+		return 0, after.Size, "replace", true, nil
 	}
 	if after.Size < before.Size {
-		return 0, after.Size, "truncate", true
+		return 0, after.Size, "truncate", true, nil
 	}
 	if after.Size > before.Size {
-		return before.Size, after.Size - before.Size, "append", true
+		sum, herr := hashPrefix(after.Path, before.Size)
+		if herr != nil {
+			return 0, 0, "", false, herr
+		}
+		if sum == before.Sum {
+			return before.Size, after.Size - before.Size, "append", true, nil
+		}
+		return 0, after.Size, "rewrite", true, nil
 	}
 	if before.Sum != after.Sum || after.ModTime.After(before.ModTime) {
-		return 0, after.Size, "replace", true
+		return 0, after.Size, "replace", true, nil
 	}
-	return 0, 0, "", false
+	return 0, 0, "", false, nil
+}
+
+func hashPrefix(path string, n int64) ([32]byte, error) {
+	var sum [32]byte
+	f, err := os.Open(path)
+	if err != nil {
+		return sum, fmt.Errorf("ログの先頭を確認できません: %w", err)
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, io.LimitReader(f, n)); err != nil {
+		return sum, fmt.Errorf("ログの先頭を読めません: %w", err)
+	}
+	copy(sum[:], h.Sum(nil))
+	return sum, nil
 }
 
 func sameID(a, b Artifact) bool {

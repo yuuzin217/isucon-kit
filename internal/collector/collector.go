@@ -91,19 +91,20 @@ func Collect(ctx context.Context, st *store.Store, cfg *config.File, label strin
 
 // Import はローカルログをファイル全体としてスナップショットへコピーする。SSH は使わない。
 func Import(ctx context.Context, st *store.Store, cfg *config.File, accessPath, format, slowPath, label string) (Result, error) {
-	return importLocal(ctx, st, cfg, accessPath, format, 0, slowPath, 0, label, ScopeFull)
+	return importLocal(ctx, st, cfg, accessPath, format, 0, -1, slowPath, 0, -1, label, ScopeFull)
 }
 
-// ImportDelta は各ログの offset 以降だけをコピーする。offset 0 はファイル全体。
+// ImportDelta は各ログの offset から最大 length バイトだけをコピーする。
+// length は判定時点の増分であり、その後に追記された分は含めない。
 // scope は今回の計測範囲を画面へ出すための説明である。
-func ImportDelta(ctx context.Context, st *store.Store, cfg *config.File, accessPath, format string, accessOffset int64, slowPath string, slowOffset int64, label, scope string) (Result, error) {
+func ImportDelta(ctx context.Context, st *store.Store, cfg *config.File, accessPath, format string, accessOffset, accessLen int64, slowPath string, slowOffset, slowLen int64, label, scope string) (Result, error) {
 	if scope == "" {
 		scope = ScopeFull
 	}
-	return importLocal(ctx, st, cfg, accessPath, format, accessOffset, slowPath, slowOffset, label, scope)
+	return importLocal(ctx, st, cfg, accessPath, format, accessOffset, accessLen, slowPath, slowOffset, slowLen, label, scope)
 }
 
-func importLocal(ctx context.Context, st *store.Store, cfg *config.File, accessPath, format string, accessOffset int64, slowPath string, slowOffset int64, label, scope string) (Result, error) {
+func importLocal(ctx context.Context, st *store.Store, cfg *config.File, accessPath, format string, accessOffset, accessLen int64, slowPath string, slowOffset, slowLen int64, label, scope string) (Result, error) {
 	if accessPath == "" && slowPath == "" {
 		return Result{}, fmt.Errorf("import には --access または --slowlog が必要です")
 	}
@@ -126,8 +127,8 @@ func importLocal(ctx context.Context, st *store.Store, cfg *config.File, accessP
 	var sources []model.Source
 	var files []manifestFile
 	okN, failN := 0, 0
-	add := func(kind, format, path, name string, offset int64) {
-		src, mf := copyLocal(path, offset, kind, format, name, dir, now)
+	add := func(kind, format, path, name string, offset, limit int64) {
+		src, mf := copyLocal(path, offset, limit, kind, format, name, dir, now)
 		sources = append(sources, src)
 		files = append(files, mf)
 		if src.Status == model.SourceOK {
@@ -137,10 +138,10 @@ func importLocal(ctx context.Context, st *store.Store, cfg *config.File, accessP
 		}
 	}
 	if accessPath != "" {
-		add(model.KindAccess, format, accessPath, "local-access.log", accessOffset)
+		add(model.KindAccess, format, accessPath, "local-access.log", accessOffset, accessLen)
 	}
 	if slowPath != "" {
-		add(model.KindSlow, model.FormatMySQL, slowPath, "local-slow.log", slowOffset)
+		add(model.KindSlow, model.FormatMySQL, slowPath, "local-slow.log", slowOffset, slowLen)
 	}
 	_ = ctx
 	return finish(st, runID, label, scope, now, sources, files, okN, failN, dir)
@@ -257,7 +258,7 @@ func fetchOne(ctx context.Context, runner command.Runner, cfg *config.File, host
 	return src, mf
 }
 
-func copyLocal(path string, offset int64, kind, format, name, dir string, now time.Time) (model.Source, manifestFile) {
+func copyLocal(path string, offset, limit int64, kind, format, name, dir string, now time.Time) (model.Source, manifestFile) {
 	src := model.Source{
 		HostName:       "local",
 		Kind:           kind,
@@ -310,7 +311,11 @@ func copyLocal(path string, offset int64, kind, format, name, dir string, now ti
 		mf.Error = src.Error
 		return src, mf
 	}
-	n, copyErr := io.Copy(out, in)
+	var srcReader io.Reader = in
+	if limit >= 0 {
+		srcReader = io.LimitReader(in, limit)
+	}
+	n, copyErr := io.Copy(out, srcReader)
 	closeErr := out.Close()
 	if copyErr != nil || closeErr != nil {
 		src.Status = model.SourceFailed

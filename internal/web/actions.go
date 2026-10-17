@@ -326,7 +326,7 @@ func (s *server) runLocal(ctx context.Context, done func()) {
 			format = model.FormatJSON
 		}
 		scope := strings.Join(scopeNotes, " ")
-		res, ierr := collector.ImportDelta(ctx, s.st, s.opt.Config, accessPart.path, format, accessPart.offset, slowPart.path, slowPart.offset, "local-cycle", scope)
+		res, ierr := collector.ImportDelta(ctx, s.st, s.opt.Config, accessPart.path, format, accessPart.offset, accessPart.n, slowPart.path, slowPart.offset, slowPart.n, "local-cycle", scope)
 		if res.RunID != "" {
 			runID = res.RunID
 			_ = s.st.SetRunMode(runID, model.ModeLocal)
@@ -425,6 +425,7 @@ func observeLocal(local *config.LocalPractice) (map[string]practice.Artifact, er
 type logPart struct {
 	path   string
 	offset int64
+	n      int64
 	note   string
 	ok     bool
 }
@@ -437,7 +438,10 @@ func logDelta(label, path string, before map[string]practice.Artifact) (logPart,
 	if err != nil {
 		return logPart{}, err
 	}
-	offset, n, kind, ok := practice.AppendSpan(before[path], after)
+	offset, n, kind, ok, err := practice.AppendSpan(before[path], after)
+	if err != nil {
+		return logPart{}, err
+	}
 	if !ok {
 		return logPart{}, nil
 	}
@@ -447,8 +451,10 @@ func logDelta(label, path string, before map[string]practice.Artifact) (logPart,
 		note = fmt.Sprintf("%s: offset %d 以降の %d バイト（今回の増分）", label, offset, n)
 	case "truncate":
 		note = fmt.Sprintf("%s: 切り詰め後のファイル全体 %d バイト", label, n)
+	case "rewrite":
+		note = fmt.Sprintf("%s: ファイル全体 %d バイト（再作成。先頭が前回と違うため増分にしません）", label, n)
 	}
-	return logPart{path: path, offset: offset, note: note, ok: true}, nil
+	return logPart{path: path, offset: offset, n: n, note: note, ok: true}, nil
 }
 
 func fileFresh(path string, before map[string]practice.Artifact) (bool, error) {

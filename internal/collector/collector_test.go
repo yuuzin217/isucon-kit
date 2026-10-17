@@ -188,3 +188,24 @@ func TestImportCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestImportDeltaStopsAtJudgedLength(t *testing.T) {
+	cfg, st := loadCfg(t, nil)
+	path := filepath.Join(cfg.BaseDir(), "access.log")
+	body := append(bytes.Repeat([]byte("A"), 5*1024), bytes.Repeat([]byte("B"), 5*1024)...)
+	body = append(body, []byte("EXTRA")...)
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := ImportDelta(context.Background(), st, cfg, path, "json", 5*1024, 5*1024, "", 0, 0, "delta", "範囲")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := os.ReadFile(filepath.Join(cfg.DataDir, "snapshots", res.RunID, "local-access.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(snap) != string(bytes.Repeat([]byte("B"), 5*1024)) {
+		t.Fatalf("判定後の追記が混ざっています: len=%d", len(snap))
+	}
+}
