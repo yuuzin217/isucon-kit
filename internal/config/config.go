@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 )
 
 const (
@@ -28,7 +29,23 @@ type File struct {
 	Hosts         []Host         `json:"hosts"`
 	Collection    Collection     `json:"collection"`
 	RoutePatterns []RoutePattern `json:"route_patterns"`
-	baseDir       string
+	// ExecutionEnabled が true のときだけ、画面から計測や収集を開始できる。
+	ExecutionEnabled bool `json:"execution_enabled,omitempty"`
+	// Local はローカル練習モードの実行先。未設定でも既存の設定は読める。
+	Local   *LocalPractice `json:"local,omitempty"`
+	baseDir string
+}
+
+// LocalPractice は許可した make ターゲットだけを実行するための設定である。
+type LocalPractice struct {
+	WorkDir        string `json:"workdir"`
+	Make           string `json:"make,omitempty"`
+	Target         string `json:"target,omitempty"`
+	AccessLog      string `json:"access_log,omitempty"`
+	AccessFormat   string `json:"access_format,omitempty"`
+	SlowLog        string `json:"slow_log,omitempty"`
+	ScoreFile      string `json:"score_file,omitempty"`
+	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
 }
 
 // SSH は鍵認証の接続パラメータである。パスワードは保存しない。
@@ -246,6 +263,31 @@ func (f *File) Validate() error {
 			return fmt.Errorf("route_patterns[%d].pattern が不正な正規表現です: %w", i, err)
 		}
 		p.re = re
+	}
+	if f.Local != nil {
+		if f.Local.WorkDir != "" && (!filepath.IsAbs(f.Local.WorkDir) || f.Local.WorkDir == "/" || strings.Contains(f.Local.WorkDir, "..")) {
+			return fmt.Errorf("local.workdir は絶対パスで、ルートや親参照は使えません")
+		}
+		for _, path := range []string{f.Local.AccessLog, f.Local.SlowLog, f.Local.ScoreFile} {
+			if path != "" && (!filepath.IsAbs(path) || strings.Contains(path, "..")) {
+				return fmt.Errorf("local のログとスコアファイルは絶対パスです: %s", path)
+			}
+		}
+		if f.Local.Target != "" && f.Local.Target != "cycle" {
+			return fmt.Errorf("local.target は cycle だけを指定できます: %s", f.Local.Target)
+		}
+		if f.Local.Make != "" {
+			base := filepath.Base(f.Local.Make)
+			if base != "make" && base != "gmake" {
+				return fmt.Errorf("local.make は make か gmake です: %s", f.Local.Make)
+			}
+		}
+		if f.Local.AccessFormat != "" && f.Local.AccessFormat != "json" && f.Local.AccessFormat != "ltsv" {
+			return fmt.Errorf("local.access_format は json か ltsv です")
+		}
+		if f.Local.TimeoutSeconds < 0 || f.Local.TimeoutSeconds > 1800 {
+			return fmt.Errorf("local.timeout_seconds は 0 から 1800 です")
+		}
 	}
 	return nil
 }

@@ -112,6 +112,17 @@ func TestAPI(t *testing.T) {
 	if !strings.Contains(health.Header().Get("Cache-Control"), "no-store") {
 		t.Fatal("API がキャッシュされます")
 	}
+	page := httptest.NewRecorder()
+	mux.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/", nil))
+	html := page.Body.String()
+	for _, want := range []string{"遅いAPI", "遅いSQL", "計測履歴", "ローカル練習", "ログ収集・解析"} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("画面に %s がありません", want)
+		}
+	}
+	if strings.Contains(html, "ランキング基準") || strings.Contains(html, "Slow Endpoints") {
+		t.Fatalf("内部用語が画面に残っています: %s", html)
+	}
 }
 
 func TestHealthUnavailable(t *testing.T) {

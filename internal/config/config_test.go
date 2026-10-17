@@ -80,3 +80,27 @@ func TestRejectInvalid(t *testing.T) {
 		t.Fatalf("未作成時の案内がありません: %v", err)
 	}
 }
+
+func TestLocalPracticeValidation(t *testing.T) {
+	base := File{
+		Version: Version, DataDir: t.TempDir(),
+		SSH:        SSH{User: "isucon", Port: 22, ConnectTimeoutSeconds: 1},
+		Collection: Collection{MaxBytesPerFile: 1},
+		Hosts:      []Host{{Name: "web1", Address: PlaceholderAddress}},
+	}
+	badTarget := base
+	badTarget.Local = &LocalPractice{WorkDir: "/tmp/practice", Target: "down"}
+	if err := badTarget.Validate(); err == nil {
+		t.Fatal("許可していない make ターゲットを受け付けました")
+	}
+	relative := base
+	relative.Local = &LocalPractice{WorkDir: "practice", Target: "cycle"}
+	if err := relative.Validate(); err == nil {
+		t.Fatal("相対パスの作業ディレクトリを受け付けました")
+	}
+	ok := base
+	ok.Local = &LocalPractice{WorkDir: "/tmp/practice", Target: "cycle", TimeoutSeconds: 30}
+	if err := ok.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}

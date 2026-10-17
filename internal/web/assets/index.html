@@ -10,79 +10,206 @@
   <header>
     <div>
       <h1>isucon-kit</h1>
+      <p id="mode-label">モード: リモート</p>
       <p id="run-meta">読み込み中</p>
     </div>
-    <button id="refresh" type="button">Refresh</button>
+    <div class="header-actions">
+      <div class="seg" role="group" aria-label="モード">
+        <button type="button" id="mode-local">ローカル練習</button>
+        <button type="button" id="mode-remote">リモート</button>
+      </div>
+      <button type="button" id="primary-action">ログ収集・解析</button>
+      <button type="button" id="refresh">更新</button>
+    </div>
   </header>
   <p id="error" class="error" hidden></p>
-  <p id="empty" class="empty" hidden>まだ計測がありません。collect/import → analyze → score set</p>
-  <section id="status" hidden>
-    <p id="scope"></p>
-    <p id="timing"></p>
-    <p id="sides"></p>
-  </section>
-  <section id="score" hidden>
-    <h2>Score</h2>
-    <div class="cards">
-      <div><span>選択中</span><strong id="score-value">未計測</strong></div>
-      <div><span>判定</span><strong id="score-status">unknown</strong></div>
-      <div><span>差分</span><strong id="score-delta">-</strong></div>
-    </div>
-    <p id="score-note"></p>
-  </section>
-  <section id="endpoints" hidden>
-    <h2>Slow Endpoints</h2>
-    <p class="hint">累積秒数の降順 Top10。時間の単位は秒。p95 は単一の集計行だけのとき表示します。</p>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Method</th><th>Path</th><th>Count</th><th>Total</th><th>Avg</th></tr></thead>
-        <tbody id="endpoint-body"></tbody>
-      </table>
-    </div>
-    <p id="endpoint-state"></p>
-    <p id="endpoint-compare" class="hint"></p>
-    <div class="table-wrap" id="endpoint-diff-wrap" hidden>
-      <table>
-        <thead><tr><th>Method</th><th>Path</th><th>Base</th><th>Head</th><th>Delta</th></tr></thead>
-        <tbody id="endpoint-diff-body"></tbody>
-      </table>
-    </div>
-  </section>
-  <section id="queries" hidden>
-    <h2>Slow Queries</h2>
-    <p class="hint">匿名化フィンガープリントの累積秒数降順 Top10。</p>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Fingerprint</th><th>Count</th><th>Total</th><th>Avg</th></tr></thead>
-        <tbody id="query-body"></tbody>
-      </table>
-    </div>
-    <p id="query-state"></p>
-    <p id="query-compare" class="hint"></p>
-    <div class="table-wrap" id="query-diff-wrap" hidden>
-      <table>
-        <thead><tr><th>Fingerprint</th><th>Base</th><th>Head</th><th>Delta</th></tr></thead>
-        <tbody id="query-diff-body"></tbody>
-      </table>
-    </div>
-  </section>
-  <section id="history" hidden>
-    <h2>History</h2>
-    <div class="selectors">
-      <label>表示 run
-        <select id="run-select"></select>
-      </label>
-      <label>比較 base
-        <select id="base-select"></select>
-      </label>
-    </div>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>時刻</th><th>ラベル</th><th>Score</th><th>判定</th></tr></thead>
-        <tbody id="history-body"></tbody>
-      </table>
-    </div>
-  </section>
+  <p id="empty" class="empty" hidden>まだ計測がありません。ローカルなら計測実行、リモートならログ収集のあと、必要ならスコアを記録します。</p>
+  <p id="exec-disabled" class="hint">実行機能は無効です。計測や収集を画面から始めるには <code>isucon-kit serve --enable-execution</code> を使うか、設定の execution_enabled を true にします。</p>
+  <div class="layout">
+    <main>
+      <section id="score">
+        <h2>スコア</h2>
+        <div class="cards">
+          <div><span>現在のスコア</span><strong id="score-value">未計測</strong></div>
+          <div><span>結果</span><strong id="score-status">未計測</strong></div>
+          <div><span>比較元のスコア</span><strong id="score-base">-</strong></div>
+          <div><span>スコア差分</span><strong id="score-delta">-</strong></div>
+          <div><span>増減率</span><strong id="score-percent">-</strong></div>
+        </div>
+        <p id="score-note"></p>
+        <p id="score-time" class="hint"></p>
+        <p id="log-range" class="hint"></p>
+      </section>
+      <section id="analysis">
+        <div class="tabs" role="tablist">
+          <button type="button" class="tab active" data-tab="api">遅いAPI</button>
+          <button type="button" class="tab" data-tab="sql">遅いSQL</button>
+          <button type="button" class="tab" data-tab="trend">スコア推移</button>
+          <button type="button" class="tab" data-tab="history">計測履歴</button>
+        </div>
+        <div id="panel-api" class="panel">
+          <div class="controls">
+            <label>並び替え
+              <select id="api-sort">
+                <option value="total">合計処理時間</option>
+                <option value="avg">平均処理時間</option>
+                <option value="count">呼び出し回数</option>
+              </select>
+            </label>
+            <label>向き
+              <select id="api-order">
+                <option value="desc">降順</option>
+                <option value="asc">昇順</option>
+              </select>
+            </label>
+            <label>件数
+              <select id="api-limit">
+                <option value="10">10件</option>
+                <option value="50">50件</option>
+                <option value="all">全件</option>
+              </select>
+            </label>
+            <label>検索
+              <input id="api-search" type="search" placeholder="APIパス">
+            </label>
+          </div>
+          <p id="endpoint-state" class="hint"></p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>メソッド</th><th>API</th><th class="num">呼び出し回数</th><th class="num">合計処理時間</th><th class="num">平均処理時間</th></tr></thead>
+              <tbody id="endpoint-body"></tbody>
+            </table>
+          </div>
+          <div class="pager" id="api-pager" hidden>
+            <button type="button" id="api-prev">前へ</button>
+            <span id="api-page-label"></span>
+            <button type="button" id="api-next">次へ</button>
+          </div>
+          <p id="endpoint-compare" class="hint"></p>
+          <div class="table-wrap" id="endpoint-diff-wrap" hidden>
+            <table>
+              <thead><tr><th>メソッド</th><th>API</th><th class="num">比較元</th><th class="num">表示中</th><th class="num">差分</th></tr></thead>
+              <tbody id="endpoint-diff-body"></tbody>
+            </table>
+          </div>
+        </div>
+        <div id="panel-sql" class="panel" hidden>
+          <div class="controls">
+            <label>並び替え
+              <select id="sql-sort">
+                <option value="total">合計処理時間</option>
+                <option value="avg">平均処理時間</option>
+                <option value="count">呼び出し回数</option>
+              </select>
+            </label>
+            <label>向き
+              <select id="sql-order">
+                <option value="desc">降順</option>
+                <option value="asc">昇順</option>
+              </select>
+            </label>
+            <label>件数
+              <select id="sql-limit">
+                <option value="10">10件</option>
+                <option value="50">50件</option>
+                <option value="all">全件</option>
+              </select>
+            </label>
+            <label>検索
+              <input id="sql-search" type="search" placeholder="SQL">
+            </label>
+          </div>
+          <p id="query-state" class="hint"></p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>SQL</th><th class="num">呼び出し回数</th><th class="num">合計処理時間</th><th class="num">平均処理時間</th></tr></thead>
+              <tbody id="query-body"></tbody>
+            </table>
+          </div>
+          <div class="pager" id="sql-pager" hidden>
+            <button type="button" id="sql-prev">前へ</button>
+            <span id="sql-page-label"></span>
+            <button type="button" id="sql-next">次へ</button>
+          </div>
+          <p id="query-compare" class="hint"></p>
+          <div class="table-wrap" id="query-diff-wrap" hidden>
+            <table>
+              <thead><tr><th>SQL</th><th class="num">比較元</th><th class="num">表示中</th><th class="num">差分</th></tr></thead>
+              <tbody id="query-diff-body"></tbody>
+            </table>
+          </div>
+        </div>
+        <div id="panel-trend" class="panel" hidden>
+          <p class="hint">同じモードで、スコアが記録された計測だけを古い順に並べます。失敗や未計測は点線ではなく一覧から除きます。</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>日時</th><th>ラベル</th><th class="num">スコア</th><th>結果</th></tr></thead>
+              <tbody id="trend-body"></tbody>
+            </table>
+          </div>
+        </div>
+        <div id="panel-history" class="panel" hidden>
+          <div class="controls">
+            <label>表示範囲
+              <select id="history-scope">
+                <option value="mode">このモード</option>
+                <option value="all">すべての履歴</option>
+              </select>
+            </label>
+          </div>
+          <div class="selectors">
+            <label>表示する計測
+              <select id="run-select"></select>
+            </label>
+            <label>比較元
+              <select id="base-select"></select>
+            </label>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>日時</th><th>ラベル</th><th>モード</th><th class="num">スコア</th><th>結果</th></tr></thead>
+              <tbody id="history-body"></tbody>
+            </table>
+          </div>
+          <form id="score-form" class="score-form">
+            <h3>スコアを記録</h3>
+            <label>結果
+              <select id="manual-status">
+                <option value="pass">成功</option>
+                <option value="fail">失敗</option>
+                <option value="unknown">未計測</option>
+              </select>
+            </label>
+            <label>スコア
+              <input id="manual-value" type="number" min="0" step="1" placeholder="成功なら必須">
+            </label>
+            <button type="submit">記録する</button>
+          </form>
+        </div>
+      </section>
+    </main>
+    <aside>
+      <section>
+        <h2>実行状態</h2>
+        <p id="exec-status">待機中</p>
+        <p id="exec-step" class="hint"></p>
+        <p id="exec-elapsed" class="hint"></p>
+        <pre id="exec-log"></pre>
+      </section>
+      <section>
+        <h2>確認ポイント</h2>
+        <ul id="hints"></ul>
+      </section>
+      <section>
+        <h2>直近の計測</h2>
+        <ul id="recent"></ul>
+      </section>
+      <section id="hosts-panel">
+        <h2>接続先</h2>
+        <ul id="hosts"></ul>
+      </section>
+    </aside>
+  </div>
   <script src="/app.js"></script>
 </body>
 </html>
