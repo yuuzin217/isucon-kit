@@ -16,6 +16,9 @@ import (
 
 const timeLayout = time.RFC3339
 
+const runColumns = `id, created_at, label, git_sha, note, score, benchmark_status, collection_status, analysis_status,
+		timing_basis, collection_scope, tool_versions, access_analysis, slow_analysis, analysis_error, mode`
+
 // ErrNotFound は run が存在しない。
 var ErrNotFound = errors.New("run が見つかりません")
 
@@ -132,16 +135,70 @@ func (s *Store) migrate() error {
 		if _, err := s.db.Exec(`INSERT INTO schema_version(version) VALUES (1)`); err != nil {
 			return err
 		}
-	} else {
-		var v int
-		if err := s.db.QueryRow(`SELECT version FROM schema_version LIMIT 1`).Scan(&v); err != nil {
+	}
+	var v int
+	if err := s.db.QueryRow(`SELECT version FROM schema_version LIMIT 1`).Scan(&v); err != nil {
+		return err
+	}
+	if v > 2 {
+		return fmt.Errorf("未対応の schema_version %d です", v)
+	}
+	if v < 2 {
+		if err := s.upgradeV2(); err != nil {
 			return err
-		}
-		if v != 1 {
-			return fmt.Errorf("未対応の schema_version %d です", v)
 		}
 	}
 	return nil
+}
+
+func (s *Store) upgradeV2() error {
+	if !s.hasColumn("runs", "mode") {
+		if _, err := s.db.Exec(`ALTER TABLE runs ADD COLUMN mode TEXT NOT NULL DEFAULT 'legacy'`); err != nil {
+			return fmt.Errorf("runs.mode の追加に失敗しました: %w", err)
+		}
+	}
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS executions (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			mode TEXT NOT NULL,
+			status TEXT NOT NULL,
+			step TEXT NOT NULL DEFAULT '',
+			started_at TEXT,
+			finished_at TEXT,
+			error TEXT NOT NULL DEFAULT '',
+			log TEXT NOT NULL DEFAULT '',
+			run_id TEXT NOT NULL DEFAULT ''
+		)`,
+	}
+	for _, q := range stmts {
+		if _, err := s.db.Exec(q); err != nil {
+			return err
+		}
+	}
+	_, err := s.db.Exec(`UPDATE schema_version SET version = 2`)
+	return err
+}
+
+func (s *Store) hasColumn(table, column string) bool {
+	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return false
+		}
+		if name == column {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) tighten() {
@@ -157,13 +214,17 @@ func (s *Store) CreateRun(run model.Run, sources []model.Source) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	mode := run.Mode
+	if mode == "" {
+		mode = model.ModeLegacy
+	}
 	_, err = tx.Exec(`INSERT INTO runs(
 		id, created_at, label, git_sha, note, score, benchmark_status, collection_status, analysis_status,
-		timing_basis, collection_scope, tool_versions, access_analysis, slow_analysis, analysis_error
-	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		timing_basis, collection_scope, tool_versions, access_analysis, slow_analysis, analysis_error, mode
+	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		run.ID, run.CreatedAt.UTC().Format(timeLayout), run.Label, nullString(run.GitSHA), run.Note, nullInt(run.Score),
 		run.BenchmarkStatus, run.CollectionStatus, run.AnalysisStatus, run.TimingBasis, run.CollectionScope, run.ToolVersions,
-		run.AccessAnalysis, run.SlowAnalysis, run.AnalysisError,
+		run.AccessAnalysis, run.SlowAnalysis, run.AnalysisError, mode,
 	)
 	if err != nil {
 		return fmt.Errorf("run の保存に失敗しました: %w", err)
@@ -193,9 +254,7 @@ func (s *Store) CreateRun(run model.Run, sources []model.Source) error {
 
 // GetRun は ID で run を読む。
 func (s *Store) GetRun(id string) (model.Run, error) {
-	row := s.db.QueryRow(`SELECT id, created_at, label, git_sha, note, score, benchmark_status, collection_status, analysis_status,
-		timing_basis, collection_scope, tool_versions, access_analysis, slow_analysis, analysis_error
-		FROM runs WHERE id = ?`, id)
+	row := s.db.QueryRow(`SELECT `+runColumns+` FROM runs WHERE id = ?`, id)
 	run, err := scanRun(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.Run{}, ErrNotFound
@@ -205,9 +264,7 @@ func (s *Store) GetRun(id string) (model.Run, error) {
 
 // LatestRun は最も新しい run を返す。
 func (s *Store) LatestRun() (model.Run, error) {
-	row := s.db.QueryRow(`SELECT id, created_at, label, git_sha, note, score, benchmark_status, collection_status, analysis_status,
-		timing_basis, collection_scope, tool_versions, access_analysis, slow_analysis, analysis_error
-		FROM runs ORDER BY created_at DESC, id DESC LIMIT 1`)
+	row := s.db.QueryRow(`SELECT ` + runColumns + ` FROM runs ORDER BY created_at DESC, id DESC LIMIT 1`)
 	run, err := scanRun(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.Run{}, ErrNotFound
@@ -217,9 +274,7 @@ func (s *Store) LatestRun() (model.Run, error) {
 
 // ListRuns は新しい順に最大 limit 件返す。
 func (s *Store) ListRuns(limit int) ([]model.Run, error) {
-	rows, err := s.db.Query(`SELECT id, created_at, label, git_sha, note, score, benchmark_status, collection_status, analysis_status,
-		timing_basis, collection_scope, tool_versions, access_analysis, slow_analysis, analysis_error
-		FROM runs ORDER BY created_at DESC, id DESC LIMIT ?`, limit)
+	rows, err := s.db.Query(`SELECT `+runColumns+` FROM runs ORDER BY created_at DESC, id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -403,7 +458,7 @@ func scanRun(row scanner) (model.Run, error) {
 	var git sql.NullString
 	var score sql.NullInt64
 	err := row.Scan(&run.ID, &created, &run.Label, &git, &run.Note, &score, &run.BenchmarkStatus, &run.CollectionStatus,
-		&run.AnalysisStatus, &run.TimingBasis, &run.CollectionScope, &run.ToolVersions, &run.AccessAnalysis, &run.SlowAnalysis, &run.AnalysisError)
+		&run.AnalysisStatus, &run.TimingBasis, &run.CollectionScope, &run.ToolVersions, &run.AccessAnalysis, &run.SlowAnalysis, &run.AnalysisError, &run.Mode)
 	if err != nil {
 		return model.Run{}, err
 	}

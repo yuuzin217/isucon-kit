@@ -472,6 +472,7 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	fs.SetOutput(stderr)
 	configPath := fs.String("config", "isucon-kit.json", "設定ファイル")
 	port := fs.Int("port", 8080, "待受ポート")
+	enableExec := fs.Bool("enable-execution", false, "画面からの計測と収集を有効にする")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -479,15 +480,19 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		fmt.Fprintln(stderr, "--port は 1 から 65535 の整数です")
 		return 2
 	}
-	_, st, code := openStore(*configPath, stderr)
+	cfg, st, code := openStore(*configPath, stderr)
 	if code != 0 {
 		return code
 	}
 	defer st.Close()
 	addr := fmt.Sprintf("127.0.0.1:%d", *port)
 	fmt.Fprintf(stdout, "http://%s/ を待受中です。Ctrl+C で停止します。\n", addr)
+	if cfg.ExecutionEnabled || *enableExec {
+		fmt.Fprintln(stdout, "画面からの計測と収集は有効です。")
+	}
 	logger := log.New(stderr, "", 0)
-	if err := web.Serve(ctx, addr, st, logger); err != nil && !errors.Is(err, context.Canceled) {
+	opt := web.Options{Config: cfg, ExecutionEnabled: cfg.ExecutionEnabled || *enableExec}
+	if err := web.ServeWith(ctx, addr, st, logger, opt); err != nil && !errors.Is(err, context.Canceled) {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}

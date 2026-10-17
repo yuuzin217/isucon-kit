@@ -32,6 +32,18 @@ const (
 	FormatJSON  = "json"
 	FormatLTSV  = "ltsv"
 	FormatMySQL = "mysql"
+
+	// ModeLegacy はモード導入前の履歴である。
+	ModeLegacy = "legacy"
+	// ModeLocal はローカル練習の計測である。
+	ModeLocal = "local"
+	// ModeRemote はリモートサーバーの収集である。
+	ModeRemote = "remote"
+
+	ExecIdle    = "idle"
+	ExecRunning = "running"
+	ExecDone    = "done"
+	ExecFailed  = "failed"
 )
 
 // Run は1回の収集または取り込みを表す。
@@ -51,6 +63,8 @@ type Run struct {
 	AccessAnalysis   string
 	SlowAnalysis     string
 	AnalysisError    string
+	// Mode は local / remote / legacy。空のまま保存すると legacy になる。
+	Mode string
 }
 
 // Source は収集元ファイル1件を表す。生ログ本文は持たない。

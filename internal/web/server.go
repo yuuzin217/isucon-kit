@@ -1,4 +1,5 @@
-// Package web は 127.0.0.1 向けの参照専用ダッシュボードを提供する。
+// Package web は 127.0.0.1 向けのダッシュボードを提供する。
+// 画面からの計測と収集は既定で無効で、有効化しても許可した操作だけを受け付ける。
 package web
 
 import (
@@ -15,10 +16,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yuuzin217/isucon-kit/internal/command"
+	"github.com/yuuzin217/isucon-kit/internal/config"
+	"github.com/yuuzin217/isucon-kit/internal/hints"
 	"github.com/yuuzin217/isucon-kit/internal/model"
 	"github.com/yuuzin217/isucon-kit/internal/report"
 	"github.com/yuuzin217/isucon-kit/internal/store"
 )
+
+// Options は画面からの実行に必要な依存である。未指定なら参照専用のまま。
+type Options struct {
+	Config           *config.File
+	ExecutionEnabled bool
+	Runner           command.Runner
+}
 
 //go:embed assets/*
 var assets embed.FS
@@ -30,10 +41,16 @@ const (
 
 // NewMux は GUI と参照 API のハンドラを返す。
 func NewMux(st *store.Store, logger *log.Logger) http.Handler {
+	return NewMuxWith(st, logger, Options{})
+}
+
+// NewMuxWith は実行機能の有無を指定してハンドラを作る。
+func NewMuxWith(st *store.Store, logger *log.Logger, opt Options) http.Handler {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
 	}
-	s := &server{st: st, logger: logger}
+	s := &server{st: st, logger: logger, opt: opt}
+	markInterrupted(st)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// embed 以外のファイルは開かない。.. を含むパスは静的配信へ渡さない。
 		if strings.Contains(r.URL.Path, "..") {
@@ -46,6 +63,11 @@ func NewMux(st *store.Store, logger *log.Logger) http.Handler {
 
 // Serve は 127.0.0.1 だけで待ち受け、ctx のキャンセル後 5 秒以内に停止する。
 func Serve(ctx context.Context, addr string, st *store.Store, logger *log.Logger) error {
+	return ServeWith(ctx, addr, st, logger, Options{})
+}
+
+// ServeWith は実行オプション付きで 127.0.0.1 だけを待ち受ける。
+func ServeWith(ctx context.Context, addr string, st *store.Store, logger *log.Logger, opt Options) error {
 	if !strings.HasPrefix(addr, "127.0.0.1:") {
 		return errors.New("待受は 127.0.0.1 だけです")
 	}
@@ -54,7 +76,7 @@ func Serve(ctx context.Context, addr string, st *store.Store, logger *log.Logger
 		return fmt.Errorf("ポートを開けませんでした。使用中でないか確認してください: %w", err)
 	}
 	srv := &http.Server{
-		Handler:           NewMux(st, logger),
+		Handler:           NewMuxWith(st, logger, opt),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	errCh := make(chan error, 1)
@@ -79,16 +101,64 @@ func Serve(ctx context.Context, addr string, st *store.Store, logger *log.Logger
 type server struct {
 	st     *store.Store
 	logger *log.Logger
+	opt    Options
+	jobs   jobRunner
+}
+
+func (s *server) routePost(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	case "/api/mode":
+		s.setMode(w, r)
+	case "/api/actions/remote-collect":
+		s.remoteCollect(w, r)
+	case "/api/actions/local-cycle":
+		s.localCycle(w, r)
+	default:
+		if strings.HasPrefix(r.URL.Path, "/api/runs/") && strings.HasSuffix(r.URL.Path, "/score") {
+			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/runs/"), "/score")
+			if id == "" || strings.Contains(id, "/") {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "run が見つかりません"})
+				return
+			}
+			s.postScore(w, r, id)
+			return
+		}
+		w.Header().Set("Allow", "GET, HEAD")
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "この API は参照専用です"})
+	}
+}
+
+func (s *server) hints(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("run")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "run が必要です"})
+		return
+	}
+	d, err := LoadDetail(s.st, id, 50)
+	if errors.Is(err, store.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "run が見つかりません"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "ヒントを計算できません"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"hints": hints.FromStats(d.Endpoints, d.Queries)})
 }
 
 func (s *server) route(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		s.routePost(w, r)
+		return
+	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		w.Header().Set("Allow", "GET, HEAD")
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "この API は参照専用です"})
+		w.Header().Set("Allow", "GET, HEAD, POST")
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "このメソッドは使えません"})
 		return
 	}
 	switch r.URL.Path {
 	case "/":
+		s.ensureCSRF(w, r)
 		s.static(w, r, "assets/index.html", "text/html; charset=utf-8")
 	case "/style.css":
 		s.static(w, r, "assets/style.css", "text/css; charset=utf-8")
@@ -102,6 +172,12 @@ func (s *server) route(w http.ResponseWriter, r *http.Request) {
 		s.latest(w, r)
 	case "/api/compare":
 		s.compare(w, r)
+	case "/api/session":
+		s.session(w, r)
+	case "/api/execution":
+		s.execution(w, r)
+	case "/api/hints":
+		s.hints(w, r)
 	default:
 		if strings.HasPrefix(r.URL.Path, "/api/runs/") {
 			id := strings.TrimPrefix(r.URL.Path, "/api/runs/")
@@ -143,7 +219,16 @@ func (s *server) runs(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	runs, err := s.st.ListRuns(limit)
+	mode := r.URL.Query().Get("mode")
+	if mode != "" && mode != model.ModeLocal && mode != model.ModeRemote && mode != model.ModeLegacy && mode != "all" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "mode が不正です"})
+		return
+	}
+	filter := mode
+	if mode == "all" {
+		filter = ""
+	}
+	runs, err := s.st.ListRunsFiltered(limit, filter)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "一覧を取得できません"})
 		return
@@ -159,8 +244,28 @@ func (s *server) runs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *server) latest(w http.ResponseWriter, _ *http.Request) {
-	run, err := s.st.LatestRun()
+func (s *server) latest(w http.ResponseWriter, r *http.Request) {
+	mode := r.URL.Query().Get("mode")
+	if mode != "" && mode != model.ModeLocal && mode != model.ModeRemote && mode != model.ModeLegacy && mode != "all" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "mode が不正です"})
+		return
+	}
+	var run model.Run
+	var err error
+	if mode == model.ModeLocal || mode == model.ModeRemote || mode == model.ModeLegacy {
+		list, lerr := s.st.ListRunsFiltered(1, mode)
+		if lerr != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "最新 run を取得できません"})
+			return
+		}
+		if len(list) == 0 {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "計測がありません"})
+			return
+		}
+		run = list[0]
+	} else {
+		run, err = s.st.LatestRun()
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "計測がありません"})
 		return
@@ -169,15 +274,26 @@ func (s *server) latest(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "最新 run を取得できません"})
 		return
 	}
-	s.writeDetail(w, run.ID)
+	s.writeDetail(w, r, run.ID)
 }
 
-func (s *server) runByID(w http.ResponseWriter, _ *http.Request, id string) {
-	s.writeDetail(w, id)
+func (s *server) runByID(w http.ResponseWriter, r *http.Request, id string) {
+	s.writeDetail(w, r, id)
 }
 
-func (s *server) writeDetail(w http.ResponseWriter, id string) {
-	d, err := LoadDetail(s.st, id, displayLimit)
+func (s *server) writeDetail(w http.ResponseWriter, r *http.Request, id string) {
+	limit := displayLimit
+	if r != nil {
+		if raw := r.URL.Query().Get("stats_limit"); raw != "" {
+			n, err := strconv.Atoi(raw)
+			if err != nil || n < 1 || n > 2000 {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "stats_limit は 1 から 2000 です"})
+				return
+			}
+			limit = n
+		}
+	}
+	d, err := LoadDetail(s.st, id, limit)
 	if errors.Is(err, store.ErrNotFound) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "run が見つかりません"})
 		return
@@ -186,7 +302,7 @@ func (s *server) writeDetail(w http.ResponseWriter, id string) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "run を取得できません"})
 		return
 	}
-	writeJSON(w, http.StatusOK, detailView(d))
+	writeJSON(w, http.StatusOK, detailView(d, limit))
 }
 
 func (s *server) compare(w http.ResponseWriter, r *http.Request) {
@@ -214,7 +330,16 @@ func (s *server) compare(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "比較先を取得できません"})
 		return
 	}
-	writeJSON(w, http.StatusOK, report.Compare(b, h))
+	cmp := report.Compare(b, h)
+	if b.Run.Mode != h.Run.Mode {
+		cmp.EndpointsComparable = false
+		cmp.EndpointsReason = "実行モードまたは過去の計測条件が異なるため、APIの改善率は出しません"
+		cmp.QueriesComparable = false
+		cmp.QueriesReason = "実行モードまたは過去の計測条件が異なるため、SQLの改善率は出しません"
+		cmp.Endpoints = nil
+		cmp.Queries = nil
+	}
+	writeJSON(w, http.StatusOK, cmp)
 }
 
 // LoadDetail は表示用の run 詳細を読む。スナップショットの絶対パスは含めない。
@@ -273,6 +398,7 @@ type runView struct {
 	CollectionScope  string  `json:"collection_scope"`
 	AccessAnalysis   string  `json:"access_analysis"`
 	SlowAnalysis     string  `json:"slow_analysis"`
+	Mode             string  `json:"mode"`
 }
 
 func toRunView(run model.Run) runView {
@@ -280,7 +406,7 @@ func toRunView(run model.Run) runView {
 		ID: run.ID, CreatedAt: run.CreatedAt.UTC().Format(time.RFC3339), Label: run.Label, GitSHA: run.GitSHA,
 		Note: run.Note, Score: run.Score, BenchmarkStatus: run.BenchmarkStatus, CollectionStatus: run.CollectionStatus,
 		AnalysisStatus: run.AnalysisStatus, CollectionScope: run.CollectionScope, AccessAnalysis: run.AccessAnalysis,
-		SlowAnalysis: run.SlowAnalysis,
+		SlowAnalysis: run.SlowAnalysis, Mode: run.Mode,
 	}
 }
 
@@ -296,7 +422,7 @@ type sourceView struct {
 	AnalysisError  string `json:"analysis_error,omitempty"`
 }
 
-func detailView(d report.Detail) map[string]any {
+func detailView(d report.Detail, limit int) map[string]any {
 	sources := make([]sourceView, 0, len(d.Sources))
 	for _, src := range d.Sources {
 		sources = append(sources, sourceView{
@@ -315,8 +441,8 @@ func detailView(d report.Detail) map[string]any {
 		"timing_basis":   d.Run.TimingBasis,
 		"analysis_error": d.Run.AnalysisError,
 		"ranking":        "total_seconds desc",
-		"endpoint_limit": displayLimit,
-		"query_limit":    displayLimit,
+		"endpoint_limit": limit,
+		"query_limit":    limit,
 		"sources":        sources,
 		"endpoints":      d.Endpoints,
 		"queries":        d.Queries,

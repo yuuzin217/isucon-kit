@@ -1,0 +1,123 @@
+package practice
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/yuuzin217/isucon-kit/internal/model"
+)
+
+type fakeRunner struct {
+	name string
+	args []string
+	err  error
+	wait bool
+}
+
+func (f *fakeRunner) Run(ctx context.Context, name string, args ...string) ([]byte, []byte, error) {
+	f.name = name
+	f.args = append([]string(nil), args...)
+	if f.wait {
+		<-ctx.Done()
+		return []byte("-----BEGIN OPENSSH PRIVATE KEY----- secret-material\n"), nil, ctx.Err()
+	}
+	if f.err != nil {
+		return nil, []byte("failed"), f.err
+	}
+	return []byte("ok\n-----BEGIN OPENSSH PRIVATE KEY----- secret-material\n"), nil, nil
+}
+
+func (f *fakeRunner) LookPath(name string) (string, error) { return name, nil }
+
+func workdir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Makefile"), []byte("cycle:\n\ttrue\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestCommandAllowlist(t *testing.T) {
+	dir := workdir(t)
+	name, args, err := Command(Spec{WorkDir: dir, Target: "cycle"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "make" || len(args) != 3 || args[0] != "-C" || args[1] != dir || args[2] != "cycle" {
+		t.Fatalf("引数が許可範囲を超えています: %s %v", name, args)
+	}
+	for _, target := range []string{"", "down", "cycle;rm", "up"} {
+		if _, _, err := Command(Spec{WorkDir: dir, Target: target}); err == nil {
+			t.Fatalf("ターゲット %q を許可しました", target)
+		}
+	}
+	if _, _, err := Command(Spec{WorkDir: dir, Make: "/tmp/bash", Target: "cycle"}); err == nil {
+		t.Fatal("make 以外の実行ファイルを許可しました")
+	}
+	if _, _, err := Command(Spec{WorkDir: "relative", Target: "cycle"}); err == nil {
+		t.Fatal("相対パスを許可しました")
+	}
+	if _, _, err := Command(Spec{WorkDir: "/", Target: "cycle"}); err == nil {
+		t.Fatal("ルートを許可しました")
+	}
+	if _, _, err := Command(Spec{WorkDir: dir + "/../" + filepath.Base(dir), Target: "cycle"}); err == nil {
+		t.Fatal("親参照を許可しました")
+	}
+	missing := filepath.Join(t.TempDir(), "no-makefile")
+	if err := os.Mkdir(missing, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Command(Spec{WorkDir: missing, Target: "cycle"}); err == nil {
+		t.Fatal("Makefile が無いディレクトリを許可しました")
+	}
+}
+
+func TestRunTimeoutAndRedactableOutput(t *testing.T) {
+	dir := workdir(t)
+	runner := &fakeRunner{wait: true}
+	_, err := Run(context.Background(), runner, Spec{WorkDir: dir, Target: "cycle", Timeout: 50 * time.Millisecond})
+	if err == nil || !strings.Contains(err.Error(), "タイムアウト") {
+		t.Fatalf("タイムアウトになりません: %v", err)
+	}
+	if runner.name != "make" || strings.Join(runner.args, " ") != "-C "+dir+" cycle" {
+		t.Fatalf("実行引数が違います: %s %v", runner.name, runner.args)
+	}
+}
+
+func TestReadScore(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "score.json")
+	if _, ok, err := ReadScore(""); err != nil || ok {
+		t.Fatalf("未設定: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := ReadScore(filepath.Join(dir, "missing.json")); err != nil || ok {
+		t.Fatalf("欠落: ok=%v err=%v", ok, err)
+	}
+	if err := os.WriteFile(path, []byte(`{"status":"pass"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ReadScore(path); err == nil {
+		t.Fatal("pass なのに score 無しを受け付けました")
+	}
+	score := 0
+	raw := `{"score":0,"status":"pass"}`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec, ok, err := ReadScore(path)
+	if err != nil || !ok || rec.Score == nil || *rec.Score != score || rec.Status != model.BenchmarkPass {
+		t.Fatalf("0点: %+v ok=%v err=%v", rec, ok, err)
+	}
+	if err := os.WriteFile(path, []byte(`{"status":"fail"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec, ok, err = ReadScore(path)
+	if err != nil || !ok || rec.Score != nil || rec.Status != model.BenchmarkFail {
+		t.Fatalf("失敗: %+v ok=%v err=%v", rec, ok, err)
+	}
+}

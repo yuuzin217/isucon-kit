@@ -1,54 +1,45 @@
 :root {
   color-scheme: light;
   font-family: "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
-  background: #f6f7f9;
-  color: #1c1e21;
+  background: #f7f8fa;
+  color: #1d2128;
 }
-body {
-  margin: 0 auto;
-  max-width: 1100px;
-  padding: 16px;
-}
-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-}
-h1 { margin: 0; font-size: 1.4rem; }
-h2 { font-size: 1.05rem; margin: 0 0 8px; }
-section {
-  background: #fff;
-  border: 1px solid #d8dde6;
-  border-radius: 8px;
-  padding: 12px;
-  margin-top: 12px;
-}
-button, select {
-  font: inherit;
-  padding: 6px 10px;
-}
-.cards {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-}
-.cards div {
-  background: #f3f5f8;
-  border-radius: 6px;
-  padding: 8px;
-}
-.cards span { display: block; color: #5c6570; font-size: 0.8rem; }
-.cards strong { font-size: 1.3rem; }
-.hint, #run-meta, #scope, #timing, #sides, #score-note { color: #3d4652; font-size: 0.9rem; }
-.error { color: #8d1d18; background: #fdecea; padding: 8px; border-radius: 6px; }
-.empty { background: #fff8e8; padding: 8px; border-radius: 6px; }
+body { margin: 0 auto; max-width: 1180px; padding: 20px; }
+header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 16px; }
+h1 { margin: 0 0 4px; font-size: 1.45rem; font-weight: 650; }
+h2 { margin: 0 0 10px; font-size: 1rem; }
+h3 { margin: 0 0 8px; font-size: 0.95rem; }
+p { margin: 6px 0; }
+button, select, input { font: inherit; }
+[hidden] { display: none !important; }
+button { background: #fff; border: 1px solid #cfd6e0; border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+button:disabled { opacity: 0.55; cursor: not-allowed; }
+button.primary, #primary-action { background: #1f6feb; color: #fff; border-color: #1f6feb; }
+.header-actions, .seg, .controls, .selectors, .pager { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+.seg button.active { background: #e8f1ff; border-color: #1f6feb; }
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 16px; }
+main section, aside section { background: #fff; border: 1px solid #e4e8ee; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.cards div { background: #f4f7fb; border-radius: 10px; padding: 10px; }
+.cards span { display: block; color: #5d6773; font-size: 0.78rem; }
+.cards strong { font-size: 1.25rem; }
+.tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+.tab.active { background: #1d2128; color: #fff; border-color: #1d2128; }
+.controls label, .selectors label, .score-form label { display: grid; gap: 4px; font-size: 0.82rem; color: #445; }
+.hint, #mode-label, #run-meta { color: #4d5866; font-size: 0.9rem; }
+.error { color: #8d1d18; background: #fdecea; padding: 10px 12px; border-radius: 8px; }
+.empty { background: #fff8e8; padding: 10px 12px; border-radius: 8px; }
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; }
-th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #e6eaf0; white-space: nowrap; }
-td.wrap { white-space: normal; word-break: break-all; }
-.selectors { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
-@media (max-width: 700px) {
-  .cards { grid-template-columns: 1fr; }
-  header { align-items: flex-start; }
+th, td { text-align: left; padding: 8px; border-bottom: 1px solid #eef1f5; vertical-align: top; }
+td.wrap, th.wrap { white-space: normal; word-break: break-word; }
+.num, td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+pre { white-space: pre-wrap; word-break: break-word; background: #f6f8fb; border-radius: 8px; padding: 8px; max-height: 180px; overflow: auto; font-size: 0.78rem; }
+pre:empty { display: none; }
+ul { margin: 0; padding-left: 1.1rem; }
+.score-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin-top: 12px; }
+aside { font-size: 0.9rem; }
+@media (max-width: 900px) {
+  .layout, .cards { grid-template-columns: 1fr; }
+  header { flex-direction: column; }
 }
