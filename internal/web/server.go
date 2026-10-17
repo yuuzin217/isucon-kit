@@ -134,16 +134,148 @@ func (s *server) hints(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "run が必要です"})
 		return
 	}
-	d, err := LoadDetail(s.st, id, 50)
-	if errors.Is(err, store.ErrNotFound) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "run が見つかりません"})
+	if _, err := s.st.GetRun(id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "run が見つかりません"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "ヒントを計算できません"})
 		return
 	}
+	total, err := firstEndpoint(s.st, id, "total")
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "ヒントを計算できません"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"hints": hints.FromStats(d.Endpoints, d.Queries)})
+	avg, err := firstEndpoint(s.st, id, "avg")
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "ヒントを計算できません"})
+		return
+	}
+	count, err := firstEndpoint(s.st, id, "count")
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "ヒントを計算できません"})
+		return
+	}
+	queries, _, err := s.st.SearchQueries(id, store.StatQuery{Sort: "total", Desc: true, Limit: 1})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "ヒントを計算できません"})
+		return
+	}
+	var query *model.QueryStat
+	if len(queries) > 0 {
+		query = &queries[0]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"hints": hints.FromLeaders(total, avg, count, query)})
+}
+
+func firstEndpoint(st *store.Store, id, sort string) (*model.EndpointStat, error) {
+	rows, _, err := st.SearchEndpoints(id, store.StatQuery{Sort: sort, Desc: true, Limit: 1})
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	return &rows[0], nil
+}
+
+func splitStats(path string) (string, string, bool) {
+	rest := strings.TrimPrefix(path, "/api/runs/")
+	if rest == path {
+		return "", "", false
+	}
+	id, kind, ok := strings.Cut(rest, "/")
+	if !ok || id == "" || strings.Contains(kind, "/") {
+		return "", "", false
+	}
+	if kind != "endpoints" && kind != "queries" {
+		return "", "", false
+	}
+	return id, kind, true
+}
+
+func (s *server) stats(w http.ResponseWriter, r *http.Request, id, kind string) {
+	if _, err := s.st.GetRun(id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "run が見つかりません"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "ランキングを取得できません"})
+		return
+	}
+	q, err := parseStatQuery(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	var items any
+	var total int
+	if kind == "endpoints" {
+		rows, n, qerr := s.st.SearchEndpoints(id, q)
+		if qerr != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "ランキングを取得できません"})
+			return
+		}
+		if rows == nil {
+			rows = []model.EndpointStat{}
+		}
+		items, total = rows, n
+	} else {
+		rows, n, qerr := s.st.SearchQueries(id, q)
+		if qerr != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "ランキングを取得できません"})
+			return
+		}
+		if rows == nil {
+			rows = []model.QueryStat{}
+		}
+		items, total = rows, n
+	}
+	order := "asc"
+	if q.Desc {
+		order = "desc"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"total": total, "limit": q.Limit, "offset": q.Offset, "sort": q.Sort, "order": order, "items": items,
+	})
+}
+
+func parseStatQuery(r *http.Request) (store.StatQuery, error) {
+	q := store.StatQuery{Sort: r.URL.Query().Get("sort"), Desc: true, Limit: 20}
+	if q.Sort == "" {
+		q.Sort = "total"
+	}
+	if q.Sort != "total" && q.Sort != "avg" && q.Sort != "count" {
+		return q, errors.New("sort は total、avg、count です")
+	}
+	switch r.URL.Query().Get("order") {
+	case "", "desc":
+		q.Desc = true
+	case "asc":
+		q.Desc = false
+	default:
+		return q, errors.New("order は asc か desc です")
+	}
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > 100 {
+			return q, errors.New("limit は 1 から 100 です")
+		}
+		q.Limit = n
+	}
+	if raw := r.URL.Query().Get("offset"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 || n > 1000000 {
+			return q, errors.New("offset が不正です")
+		}
+		q.Offset = n
+	}
+	q.Search = strings.TrimSpace(r.URL.Query().Get("q"))
+	if len(q.Search) > 200 {
+		return q, errors.New("検索文字列が長すぎます")
+	}
+	return q, nil
 }
 
 func (s *server) route(w http.ResponseWriter, r *http.Request) {
@@ -179,6 +311,10 @@ func (s *server) route(w http.ResponseWriter, r *http.Request) {
 	case "/api/hints":
 		s.hints(w, r)
 	default:
+		if id, kind, ok := splitStats(r.URL.Path); ok {
+			s.stats(w, r, id, kind)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/api/runs/") {
 			id := strings.TrimPrefix(r.URL.Path, "/api/runs/")
 			if id == "" || strings.Contains(id, "/") {

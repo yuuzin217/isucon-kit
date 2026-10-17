@@ -3,11 +3,14 @@ package practice
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/yuuzin217/isucon-kit/internal/command"
 	"github.com/yuuzin217/isucon-kit/internal/model"
 )
 
@@ -87,6 +90,78 @@ func TestRunTimeoutAndRedactableOutput(t *testing.T) {
 	if runner.name != "make" || strings.Join(runner.args, " ") != "-C "+dir+" cycle" {
 		t.Fatalf("実行引数が違います: %s %v", runner.name, runner.args)
 	}
+}
+
+func TestUnchangedArtifactIsStale(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "score.json")
+	if err := os.WriteFile(path, []byte(`{"score":42,"status":"pass"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := Observe(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := Observe(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if Changed(before, after) {
+		t.Fatal("更新していないスコアを今回の結果とみなしました")
+	}
+	if err := os.WriteFile(path, []byte(`{"score":43,"status":"pass"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rewritten, err := Observe(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !Changed(before, rewritten) {
+		t.Fatal("書き直したスコアを受け取っていません")
+	}
+}
+
+func TestMakeTimeoutKillsRecipeChildren(t *testing.T) {
+	if _, err := exec.LookPath("make"); err != nil {
+		t.Fatal("make が必要です")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Makefile"), []byte("cycle:\n\tsleep 60 & echo $$! > child.pid; wait\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Run(context.Background(), command.OSRunner{}, Spec{WorkDir: dir, Target: "cycle", Timeout: time.Second})
+	if err == nil || !strings.Contains(err.Error(), "タイムアウト") {
+		t.Fatalf("タイムアウトになりません: %v", err)
+	}
+	raw, readErr := os.ReadFile(filepath.Join(dir, "child.pid"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	pid, convErr := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if convErr != nil {
+		t.Fatal(convErr)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if !childAlive(pid) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("make の子プロセス %d が残っています", pid)
+}
+
+func childAlive(pid int) bool {
+	data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return false
+	}
+	text := string(data)
+	i := strings.LastIndex(text, ")")
+	if i < 0 || i+2 >= len(text) {
+		return true
+	}
+	return text[i+2] != 'Z'
 }
 
 func TestReadScore(t *testing.T) {

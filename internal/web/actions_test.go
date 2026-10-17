@@ -24,13 +24,17 @@ type gateRunner struct {
 	gate   chan struct{}
 	stdout string
 	err    error
+	onRun  func()
 }
 
 func (g *gateRunner) Run(ctx context.Context, name string, args ...string) ([]byte, []byte, error) {
 	g.mu.Lock()
 	g.calls = append(g.calls, append([]string{name}, args...))
-	gate, stdout, err := g.gate, g.stdout, g.err
+	gate, stdout, err, hook := g.gate, g.stdout, g.err, g.onRun
 	g.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	if gate != nil {
 		select {
 		case <-gate:
@@ -193,8 +197,16 @@ func TestLocalCycleSuccessFailureAndSingleFlight(t *testing.T) {
 	cfg := baseConfig(t.TempDir())
 	cfg.Local = &config.LocalPractice{WorkDir: dir, Target: "cycle", ScoreFile: filepath.Join(dir, "score.json"), TimeoutSeconds: 5}
 	gate := make(chan struct{})
-	runner := &gateRunner{gate: gate, stdout: "ok\n-----BEGIN OPENSSH PRIVATE KEY----- secret-material\n"}
+	scorePath := filepath.Join(dir, "score.json")
+	runner := &gateRunner{gate: gate, stdout: "ok\n-----BEGIN OPENSSH PRIVATE KEY----- secret-material\n", onRun: func() {
+		if err := os.WriteFile(scorePath, []byte("{\"score\":42,\"status\":\"pass\"}\n"), 0o600); err != nil {
+			panic(err)
+		}
+	}}
 	st, h := muxFor(t, cfg, runner, true)
+	if err := st.SetSetting("mode", model.ModeLocal); err != nil {
+		t.Fatal(err)
+	}
 	token := csrfToken(t, h)
 
 	rec := post(h, "/api/actions/local-cycle", `{"target":"down","command":"rm -rf /"}`, token, "127.0.0.1:8080", "")
@@ -241,8 +253,15 @@ func TestLocalCycleSuccessFailureAndSingleFlight(t *testing.T) {
 	failDir := practiceDir(t, `{"status":"fail"}`)
 	cfg.Local.WorkDir = failDir
 	cfg.Local.ScoreFile = filepath.Join(failDir, "score.json")
-	failRunner := &gateRunner{stdout: "bench failed recorded\n"}
+	failRunner := &gateRunner{stdout: "bench failed recorded\n", onRun: func() {
+		if err := os.WriteFile(cfg.Local.ScoreFile, []byte("{\"status\":\"fail\"}\n"), 0o600); err != nil {
+			panic(err)
+		}
+	}}
 	st2, h2 := muxFor(t, cfg, failRunner, true)
+	if err := st2.SetSetting("mode", model.ModeLocal); err != nil {
+		t.Fatal(err)
+	}
 	token = csrfToken(t, h2)
 	rec = post(h2, "/api/actions/local-cycle", `{}`, token, "127.0.0.1:8080", "")
 	if rec.Code != http.StatusAccepted {
@@ -267,6 +286,9 @@ func TestLocalTimeoutAndBadWorkdir(t *testing.T) {
 	cfg.Local = &config.LocalPractice{WorkDir: dir, Target: "cycle", TimeoutSeconds: 1}
 	runner := &gateRunner{gate: make(chan struct{})}
 	st, h := muxFor(t, cfg, runner, true)
+	if err := st.SetSetting("mode", model.ModeLocal); err != nil {
+		t.Fatal(err)
+	}
 	token := csrfToken(t, h)
 	rec := post(h, "/api/actions/local-cycle", `{}`, token, "127.0.0.1:8080", "")
 	if rec.Code != http.StatusAccepted {
@@ -284,6 +306,9 @@ func TestLocalTimeoutAndBadWorkdir(t *testing.T) {
 	cfg.Local.WorkDir = filepath.Join(dir, "missing")
 	cfg.Local.TimeoutSeconds = 5
 	st3, h3 := muxFor(t, cfg, &gateRunner{}, true)
+	if err := st3.SetSetting("mode", model.ModeLocal); err != nil {
+		t.Fatal(err)
+	}
 	token = csrfToken(t, h3)
 	rec = post(h3, "/api/actions/local-cycle", `{}`, token, "127.0.0.1:8080", "")
 	if rec.Code != http.StatusAccepted {
@@ -446,5 +471,118 @@ func TestInterruptedExecution(t *testing.T) {
 	}
 	if ex.Status != model.ExecFailed || !strings.Contains(ex.Error, "停止") {
 		t.Fatalf("中断を実行中のままにしています: %+v", ex)
+	}
+}
+
+func TestLocalCycleRejectsStaleScore(t *testing.T) {
+	dir := practiceDir(t, `{"score":42,"status":"pass"}`)
+	cfg := baseConfig(t.TempDir())
+	cfg.Local = &config.LocalPractice{WorkDir: dir, Target: "cycle", ScoreFile: filepath.Join(dir, "score.json"), TimeoutSeconds: 5}
+	runner := &gateRunner{stdout: "make exited without rewriting score\n"}
+	st, h := muxFor(t, cfg, runner, true)
+	if err := st.SetSetting("mode", model.ModeLocal); err != nil {
+		t.Fatal(err)
+	}
+	token := csrfToken(t, h)
+	rec := post(h, "/api/actions/local-cycle", `{}`, token, "127.0.0.1:8080", "")
+	if rec.Code != http.StatusAccepted {
+		t.Fatal(rec.Body.String())
+	}
+	ex := waitExec(t, st, true)
+	if ex.Status != model.ExecFailed || !strings.Contains(ex.Error, "更新されて") {
+		t.Fatalf("古いスコアを成功にしています: %+v", ex)
+	}
+	if ex.RunID != "" {
+		t.Fatalf("結果が無いのに run を作りました: %+v", ex)
+	}
+	runs, err := st.ListRuns(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("前回のスコアが残っています: %+v", runs)
+	}
+}
+
+func TestActionRequiresSelectedMode(t *testing.T) {
+	dir := practiceDir(t, `{"score":1,"status":"pass"}`)
+	cfg := baseConfig(t.TempDir())
+	cfg.Local = &config.LocalPractice{WorkDir: dir, Target: "cycle", ScoreFile: filepath.Join(dir, "score.json")}
+	runner := &gateRunner{}
+	st, h := muxFor(t, cfg, runner, true)
+	token := csrfToken(t, h)
+	rec := post(h, "/api/actions/local-cycle", `{}`, token, "127.0.0.1:8080", "")
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "モード") {
+		t.Fatalf("remote のまま local を起動しました: %d %s", rec.Code, rec.Body.String())
+	}
+	if err := st.SetSetting("mode", model.ModeLocal); err != nil {
+		t.Fatal(err)
+	}
+	rec = post(h, "/api/actions/remote-collect", `{}`, token, "127.0.0.1:8080", "")
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "モード") {
+		t.Fatalf("local のまま remote を起動しました: %d %s", rec.Code, rec.Body.String())
+	}
+	if len(runner.snapshot()) != 0 {
+		t.Fatal("拒否したのにコマンドを実行しました")
+	}
+}
+
+func TestModeChangeAndStartShareLock(t *testing.T) {
+	st := newStore(t)
+	s := &server{st: st}
+	held := make(chan struct{})
+	release := make(chan struct{})
+	go func() {
+		s.jobs.mu.Lock()
+		close(held)
+		<-release
+		if err := st.SetSetting("mode", model.ModeLocal); err != nil {
+			t.Errorf("mode: %v", err)
+		}
+		s.jobs.mu.Unlock()
+	}()
+	<-held
+	errCh := make(chan error, 1)
+	go func() {
+		_, _, err := s.jobs.start(context.Background(), st, model.ModeRemote)
+		errCh <- err
+	}()
+	time.Sleep(30 * time.Millisecond)
+	select {
+	case err := <-errCh:
+		t.Fatalf("モード保存の前に起動判定が終わりました: %v", err)
+	default:
+	}
+	close(release)
+	if err := <-errCh; !errors.Is(err, errJobMode) {
+		t.Fatalf("保存後のモードを見ていません: %v", err)
+	}
+	if s.jobs.busy() {
+		t.Fatal("拒否した起動が実行中のままです")
+	}
+
+	held = make(chan struct{})
+	release = make(chan struct{})
+	go func() {
+		s.jobs.mu.Lock()
+		close(held)
+		<-release
+		s.jobs.running = true
+		s.jobs.mu.Unlock()
+	}()
+	<-held
+	modeCh := make(chan error, 1)
+	go func() {
+		modeCh <- s.jobs.changeMode(st, model.ModeRemote)
+	}()
+	time.Sleep(30 * time.Millisecond)
+	select {
+	case err := <-modeCh:
+		t.Fatalf("実行フラグの確定前にモードを保存しました: %v", err)
+	default:
+	}
+	close(release)
+	if err := <-modeCh; !errors.Is(err, errJobBusy) {
+		t.Fatalf("実行中のモード変更を拒否していません: %v", err)
 	}
 }

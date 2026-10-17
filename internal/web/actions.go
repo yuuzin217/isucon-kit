@@ -12,10 +12,16 @@ import (
 	"github.com/yuuzin217/isucon-kit/internal/analyzer"
 	"github.com/yuuzin217/isucon-kit/internal/collector"
 	"github.com/yuuzin217/isucon-kit/internal/command"
+	"github.com/yuuzin217/isucon-kit/internal/config"
 	"github.com/yuuzin217/isucon-kit/internal/id"
 	"github.com/yuuzin217/isucon-kit/internal/model"
 	"github.com/yuuzin217/isucon-kit/internal/practice"
 	"github.com/yuuzin217/isucon-kit/internal/store"
+)
+
+var (
+	errJobBusy = errors.New("すでに実行中です")
+	errJobMode = errors.New("選択中のモードと操作が一致しません")
 )
 
 type jobRunner struct {
@@ -30,11 +36,19 @@ func (j *jobRunner) busy() bool {
 	return j.running
 }
 
-func (j *jobRunner) start(parent context.Context) (context.Context, func(), error) {
+// start は保存済みモードが want のときだけ実行中にする。モード変更と同じロックを使う。
+func (j *jobRunner) start(parent context.Context, st *store.Store, want string) (context.Context, func(), error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.running {
-		return nil, nil, errors.New("すでに実行中です")
+		return nil, nil, errJobBusy
+	}
+	mode, err := st.GetSetting("mode", model.ModeRemote)
+	if err != nil {
+		return nil, nil, err
+	}
+	if mode != want {
+		return nil, nil, errJobMode
 	}
 	ctx, cancel := context.WithCancel(parent)
 	j.running = true
@@ -46,6 +60,16 @@ func (j *jobRunner) start(parent context.Context) (context.Context, func(), erro
 		j.cancel = nil
 		j.mu.Unlock()
 	}, nil
+}
+
+// changeMode は実行中でなければモードを保存する。起動判定と排他する。
+func (j *jobRunner) changeMode(st *store.Store, mode string) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.running {
+		return errJobBusy
+	}
+	return st.SetSetting("mode", mode)
 }
 
 func (s *server) session(w http.ResponseWriter, r *http.Request) {
@@ -81,10 +105,6 @@ func (s *server) setMode(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeMutation(w, r) {
 		return
 	}
-	if s.jobs.busy() {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "実行中はモードを変更できません"})
-		return
-	}
 	var body struct {
 		Mode string `json:"mode"`
 	}
@@ -96,7 +116,11 @@ func (s *server) setMode(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "mode は local か remote です"})
 		return
 	}
-	if err := s.st.SetSetting("mode", body.Mode); err != nil {
+	if err := s.jobs.changeMode(s.st, body.Mode); err != nil {
+		if errors.Is(err, errJobBusy) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "実行中はモードを変更できません"})
+			return
+		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "モードを保存できません"})
 		return
 	}
@@ -115,9 +139,8 @@ func (s *server) remoteCollect(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "設定が読み込まれていません"})
 		return
 	}
-	ctx, done, err := s.jobs.start(context.Background())
-	if err != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+	ctx, done, err := s.jobs.start(context.Background(), s.st, model.ModeRemote)
+	if !jobStarted(w, err) {
 		return
 	}
 	go s.runRemote(ctx, done)
@@ -136,9 +159,8 @@ func (s *server) localCycle(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "local.workdir が未設定です。練習ディレクトリは設定ファイルで指定します"})
 		return
 	}
-	ctx, done, err := s.jobs.start(context.Background())
-	if err != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+	ctx, done, err := s.jobs.start(context.Background(), s.st, model.ModeLocal)
+	if !jobStarted(w, err) {
 		return
 	}
 	go s.runLocal(ctx, done)
@@ -245,6 +267,12 @@ func (s *server) runLocal(ctx context.Context, done func()) {
 	if local.TimeoutSeconds > 0 {
 		timeout = time.Duration(local.TimeoutSeconds) * time.Second
 	}
+	before, oerr := observeLocal(local)
+	if oerr != nil {
+		failExec(&ex, "失敗", oerr.Error())
+		_ = s.st.SaveExecution(ex)
+		return
+	}
 	log, err := practice.Run(ctx, s.runner(), practice.Spec{
 		WorkDir: local.WorkDir,
 		Make:    local.Make,
@@ -261,30 +289,64 @@ func (s *server) runLocal(ctx context.Context, done func()) {
 	_ = s.st.SaveExecution(ex)
 	var problems []string
 	runID := ""
-	if local.AccessLog != "" || local.SlowLog != "" {
+	accessPath, accessFresh, aerr := freshPath(local.AccessLog, before)
+	slowPath, slowFresh, serr := freshPath(local.SlowLog, before)
+	if aerr != nil || serr != nil {
+		msg := aerr
+		if msg == nil {
+			msg = serr
+		}
+		failExec(&ex, "失敗", msg.Error())
+		ex.Log = store.RedactLog(log)
+		_ = s.st.SaveExecution(ex)
+		return
+	}
+	if local.AccessLog != "" && !accessFresh {
+		problems = append(problems, "アクセスログは今回の計測で更新されていないため取り込みません")
+	}
+	if local.SlowLog != "" && !slowFresh {
+		problems = append(problems, "スローログは今回の計測で更新されていないため取り込みません")
+	}
+	if accessPath != "" || slowPath != "" {
 		format := local.AccessFormat
 		if format == "" {
 			format = model.FormatJSON
 		}
-		res, ierr := collector.Import(ctx, s.st, s.opt.Config, local.AccessLog, format, local.SlowLog, "local-cycle")
+		res, ierr := collector.Import(ctx, s.st, s.opt.Config, accessPath, format, slowPath, "local-cycle")
 		if res.RunID != "" {
 			runID = res.RunID
 			_ = s.st.SetRunMode(runID, model.ModeLocal)
 			ex.RunID = runID
-			if _, aerr := analyzer.Analyze(ctx, s.st, s.opt.Config, runID, s.runner()); aerr != nil {
-				problems = append(problems, aerr.Error())
+			if _, anerr := analyzer.Analyze(ctx, s.st, s.opt.Config, runID, s.runner()); anerr != nil {
+				problems = append(problems, anerr.Error())
 			}
 		}
 		if ierr != nil {
 			problems = append(problems, ierr.Error())
 		}
 	}
-	rec, hasScore, serr := practice.ReadScore(local.ScoreFile)
-	if serr != nil {
-		failExec(&ex, "失敗", serr.Error())
-		ex.Log = store.RedactLog(log)
-		_ = s.st.SaveExecution(ex)
-		return
+	var rec practice.ScoreRecord
+	var hasScore bool
+	if local.ScoreFile != "" {
+		scoreFresh, ferr := fileFresh(local.ScoreFile, before)
+		if ferr != nil {
+			failExec(&ex, "失敗", ferr.Error())
+			ex.Log = store.RedactLog(log)
+			_ = s.st.SaveExecution(ex)
+			return
+		}
+		if !scoreFresh {
+			problems = append(problems, "スコアファイルは今回の計測で更新されていないため、前回のスコアは使いません")
+		} else {
+			var rerr error
+			rec, hasScore, rerr = practice.ReadScore(local.ScoreFile)
+			if rerr != nil {
+				failExec(&ex, "失敗", rerr.Error())
+				ex.Log = store.RedactLog(log)
+				_ = s.st.SaveExecution(ex)
+				return
+			}
+		}
 	}
 	if hasScore {
 		var saveErr error
@@ -304,6 +366,9 @@ func (s *server) runLocal(ctx context.Context, done func()) {
 	if hasScore && rec.Status == model.BenchmarkFail {
 		problems = append(problems, "ベンチマークは失敗として記録されています。成功したスコアとは分けています")
 	}
+	if runID == "" && !hasScore {
+		problems = append(problems, "今回の計測結果を取得できませんでした")
+	}
 	if len(problems) > 0 {
 		ex.Status = model.ExecFailed
 		ex.Step = "失敗"
@@ -314,6 +379,52 @@ func (s *server) runLocal(ctx context.Context, done func()) {
 		ex.Error = ""
 	}
 	_ = s.st.SaveExecution(ex)
+}
+
+func jobStarted(w http.ResponseWriter, err error) bool {
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, errJobBusy) || errors.Is(err, errJobMode) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return false
+	}
+	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "実行を開始できません"})
+	return false
+}
+
+func observeLocal(local *config.LocalPractice) (map[string]practice.Artifact, error) {
+	out := map[string]practice.Artifact{}
+	for _, path := range []string{local.AccessLog, local.SlowLog, local.ScoreFile} {
+		if path == "" {
+			continue
+		}
+		art, err := practice.Observe(path)
+		if err != nil {
+			return nil, err
+		}
+		out[path] = art
+	}
+	return out, nil
+}
+
+func freshPath(path string, before map[string]practice.Artifact) (string, bool, error) {
+	if path == "" {
+		return "", false, nil
+	}
+	ok, err := fileFresh(path, before)
+	if err != nil || !ok {
+		return "", ok, err
+	}
+	return path, true, nil
+}
+
+func fileFresh(path string, before map[string]practice.Artifact) (bool, error) {
+	after, err := practice.Observe(path)
+	if err != nil {
+		return false, err
+	}
+	return practice.Changed(before[path], after), nil
 }
 
 func (s *server) createLocalScoreRun(rec practice.ScoreRecord) (string, error) {

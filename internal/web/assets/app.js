@@ -164,90 +164,93 @@ function renderRuns() {
   });
 }
 
-function metric(row, key) {
-  if (key === "count") return row.count ?? row.Count ?? 0;
-  if (key === "avg") return row.avg_seconds ?? row.AvgSeconds ?? 0;
-  return row.total_seconds ?? row.TotalSeconds ?? 0;
+const rankGen = { api: 0, sql: 0 };
+state.rankTotal = { api: 0, sql: 0 };
+
+function pageSizeOf(kind) {
+  const limitSel = el(kind === "api" ? "api-limit" : "sql-limit").value;
+  if (limitSel === "50") return 50;
+  if (limitSel === "all") return 100;
+  return 10;
 }
 
-function sortRows(rows, key, order) {
-  const copy = rows.slice();
-  copy.sort((a, b) => {
-    const av = metric(a, key);
-    const bv = metric(b, key);
-    if (av !== bv) return order === "asc" ? av - bv : bv - av;
-    const ac = a.count ?? a.Count ?? 0;
-    const bc = b.count ?? b.Count ?? 0;
-    if (ac !== bc) return bc - ac;
-    const an = (a.route || a.Route || a.fingerprint || a.Fingerprint || "") + (a.method || a.Method || "");
-    const bn = (b.route || b.Route || b.fingerprint || b.Fingerprint || "") + (b.method || b.Method || "");
-    return an < bn ? -1 : an > bn ? 1 : 0;
-  });
-  return copy;
-}
-
-function renderRank(kind) {
+async function renderRank(kind) {
   const detail = state.current;
   if (!detail) return;
+  const gen = ++rankGen[kind];
   const isAPI = kind === "api";
-  const source = isAPI ? (detail.endpoints || []) : (detail.queries || []);
   const analysis = isAPI ? detail.run.access_analysis : detail.run.slow_analysis;
   const stateId = isAPI ? "endpoint-state" : "query-state";
   const bodyId = isAPI ? "endpoint-body" : "query-body";
-  const search = (el(isAPI ? "api-search" : "sql-search").value || "").trim().toLowerCase();
-  const key = el(isAPI ? "api-sort" : "sql-sort").value;
-  const order = el(isAPI ? "api-order" : "sql-order").value;
-  const limitSel = el(isAPI ? "api-limit" : "sql-limit").value;
+  const pager = el(isAPI ? "api-pager" : "sql-pager");
   clearTable(bodyId);
   if (analysis === "absent") {
     text(el(stateId), "未収集");
+    pager.hidden = true;
     return;
   }
   if (analysis === "failed") {
     text(el(stateId), "解析失敗");
+    pager.hidden = true;
     return;
   }
   if (analysis === "pending") {
     text(el(stateId), "未解析");
+    pager.hidden = true;
     return;
   }
-  let rows = source.filter((row) => {
-    const name = isAPI ? (row.route || row.Route || "") : (row.fingerprint || row.Fingerprint || "");
-    return !search || name.toLowerCase().includes(search);
-  });
-  rows = sortRows(rows, key, order);
-  const pageSize = limitSel === "10" ? 10 : limitSel === "50" ? 50 : 100;
-  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
-  if (state.pages[kind] >= pageCount) state.pages[kind] = 0;
-  const start = state.pages[kind] * pageSize;
-  const view = rows.slice(start, start + pageSize);
-  const orderLabel = order === "asc" ? "短い順" : "長い順";
+  const search = (el(isAPI ? "api-search" : "sql-search").value || "").trim();
+  const key = el(isAPI ? "api-sort" : "sql-sort").value;
+  const order = el(isAPI ? "api-order" : "sql-order").value;
+  const pageSize = pageSizeOf(kind);
+  const offset = state.pages[kind] * pageSize;
+  const kindPath = isAPI ? "endpoints" : "queries";
+  const data = await getJSON("/api/runs/" + encodeURIComponent(detail.run.id) + "/" + kindPath
+    + "?sort=" + encodeURIComponent(key)
+    + "&order=" + encodeURIComponent(order)
+    + "&q=" + encodeURIComponent(search)
+    + "&limit=" + pageSize
+    + "&offset=" + offset);
+  if (gen !== rankGen[kind] || !state.current || state.current.run.id !== detail.run.id) return;
+  const total = data.total || 0;
+  state.rankTotal[kind] = total;
+  const view = data.items || [];
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  if (state.pages[kind] >= pageCount) state.pages[kind] = pageCount - 1;
+  const orderLabel = key === "count" ? (order === "asc" ? "少ない順" : "多い順") : (order === "asc" ? "短い順" : "長い順");
   const keyLabel = key === "avg" ? "平均処理時間" : key === "count" ? "呼び出し回数" : "合計処理時間";
-  text(el(stateId), view.length ? keyLabel + "の" + (key === "count" ? (order === "asc" ? "少ない順" : "多い順") : orderLabel) : "該当する行はありません");
+  if (!view.length) {
+    text(el(stateId), "該当する行はありません");
+  } else {
+    const from = offset + 1;
+    const to = offset + view.length;
+    text(el(stateId), keyLabel + "の" + orderLabel + "（全" + total + "件中 " + from + "–" + to + "件）");
+  }
   view.forEach((row) => {
     if (isAPI) {
       addRow(bodyId, [
-        row.method || row.Method || "",
-        row.route || row.Route || "",
-        { num: String(row.count ?? row.Count ?? 0) },
-        { num: totalLabel(row.total_seconds ?? row.TotalSeconds) },
-        { num: avgLabel(row.avg_seconds ?? row.AvgSeconds) },
+        row.method || "",
+        row.route || "",
+        { num: String(row.count ?? 0) },
+        { num: totalLabel(row.total_seconds) },
+        { num: avgLabel(row.avg_seconds) },
       ], 1);
     } else {
       addRow(bodyId, [
-        row.fingerprint || row.Fingerprint || "",
-        { num: String(row.count ?? row.Count ?? 0) },
-        { num: totalLabel(row.total_seconds ?? row.TotalSeconds) },
-        { num: avgLabel(row.avg_seconds ?? row.AvgSeconds) },
+        row.fingerprint || "",
+        { num: String(row.count ?? 0) },
+        { num: totalLabel(row.total_seconds) },
+        { num: avgLabel(row.avg_seconds) },
       ], 0);
     }
   });
-  const pager = el(isAPI ? "api-pager" : "sql-pager");
-  pager.hidden = rows.length <= pageSize;
+  pager.hidden = total <= pageSize;
   text(el(isAPI ? "api-page-label" : "sql-page-label"), (state.pages[kind] + 1) + " / " + pageCount);
 }
 
-function renderDetail(detail) {
+async function renderDetail(detail) {
+  const previous = state.current && state.current.run ? state.current.run.id : "";
+  if (previous !== detail.run.id) state.pages = { api: 0, sql: 0 };
   state.current = detail;
   const run = detail.run;
   text(el("run-meta"), "選択中: " + (run.label || run.id) + " / " + run.created_at);
@@ -257,8 +260,8 @@ function renderDetail(detail) {
   text(el("score-note"), run.note ? "メモ: " + run.note : "");
   text(el("endpoint-state"), "");
   text(el("query-state"), "");
-  renderRank("api");
-  renderRank("sql");
+  await renderRank("api");
+  await renderRank("sql");
   ["score", "analysis"].forEach((id) => setVisible(id, true));
   const empty = el("empty");
   if (empty) empty.hidden = true;
@@ -436,8 +439,8 @@ async function loadAll() {
     }
     const still = pool.some((run) => run.id === selected);
     const id = still ? selected : pool[0].id;
-    const detail = await getJSON("/api/runs/" + encodeURIComponent(id) + "?stats_limit=500");
-    renderDetail(detail);
+    const detail = await getJSON("/api/runs/" + encodeURIComponent(id));
+    await renderDetail(detail);
     if (state.compareOff) {
       state.baseID = "";
     } else if (baseID && baseID !== id && pool.some((run) => run.id === baseID)) {
@@ -459,8 +462,8 @@ el("refresh").addEventListener("click", () => { loadAll().catch((err) => showErr
 el("run-select").addEventListener("change", async (ev) => {
   try {
     showError("");
-    const detail = await getJSON("/api/runs/" + encodeURIComponent(ev.target.value) + "?stats_limit=500");
-    renderDetail(detail);
+    const detail = await getJSON("/api/runs/" + encodeURIComponent(ev.target.value));
+    await renderDetail(detail);
     if (state.baseID === detail.run.id) state.baseID = "";
     renderRuns();
     await renderCompare();
@@ -480,11 +483,28 @@ el("base-select").addEventListener("change", async (ev) => {
 });
 ["api", "sql"].forEach((kind) => {
   ["sort", "order", "limit"].forEach((part) => {
-    el(kind + "-" + part).addEventListener("change", () => { state.pages[kind] = 0; renderRank(kind); });
+    el(kind + "-" + part).addEventListener("change", () => {
+      state.pages[kind] = 0;
+      renderRank(kind).catch((err) => showError(err.message));
+    });
   });
-  el(kind + "-search").addEventListener("input", () => { state.pages[kind] = 0; renderRank(kind); });
-  el(kind + "-prev").addEventListener("click", () => { if (state.pages[kind] > 0) { state.pages[kind] -= 1; renderRank(kind); } });
-  el(kind + "-next").addEventListener("click", () => { state.pages[kind] += 1; renderRank(kind); });
+  el(kind + "-search").addEventListener("input", () => {
+    state.pages[kind] = 0;
+    renderRank(kind).catch((err) => showError(err.message));
+  });
+  el(kind + "-prev").addEventListener("click", () => {
+    if (state.pages[kind] > 0) {
+      state.pages[kind] -= 1;
+      renderRank(kind).catch((err) => showError(err.message));
+    }
+  });
+  el(kind + "-next").addEventListener("click", () => {
+    const pageCount = Math.max(1, Math.ceil((state.rankTotal[kind] || 0) / pageSizeOf(kind)));
+    if (state.pages[kind] + 1 < pageCount) {
+      state.pages[kind] += 1;
+      renderRank(kind).catch((err) => showError(err.message));
+    }
+  });
 });
 document.querySelectorAll(".tab").forEach((button) => {
   button.addEventListener("click", () => {

@@ -3,9 +3,11 @@ package practice
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,13 +82,23 @@ func Run(ctx context.Context, runner command.Runner, spec Spec) (string, error) 
 		ctx, cancel = context.WithTimeout(ctx, spec.Timeout)
 		defer cancel()
 	}
-	stdout, stderr, runErr := runner.Run(ctx, name, args...)
+	var stdout, stderr []byte
+	var truncated bool
+	var runErr error
+	if _, ok := runner.(command.OSRunner); ok {
+		stdout, stderr, truncated, runErr = command.RunGroup(ctx, name, command.MaxCaptureBytes, args...)
+	} else {
+		stdout, stderr, runErr = runner.Run(ctx, name, args...)
+	}
 	log := string(stdout)
 	if len(stderr) > 0 {
 		if log != "" && !strings.HasSuffix(log, "\n") {
 			log += "\n"
 		}
 		log += string(stderr)
+	}
+	if truncated {
+		log += "\n…出力が上限を超えたため以降を捨てました…\n"
 	}
 	if runErr != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -95,6 +107,63 @@ func Run(ctx context.Context, runner command.Runner, spec Spec) (string, error) 
 		return log, fmt.Errorf("計測コマンドが失敗しました: %w", runErr)
 	}
 	return log, nil
+}
+
+// Artifact は実行前後で成果物が更新されたかを比べるための観測値である。
+type Artifact struct {
+	Path    string
+	Exists  bool
+	ModTime time.Time
+	Size    int64
+	Sum     [32]byte
+}
+
+// Observe はファイルの更新時刻、サイズ、内容ハッシュを読む。無いファイルは Exists=false。
+func Observe(path string) (Artifact, error) {
+	art := Artifact{Path: path}
+	if path == "" {
+		return art, nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return art, nil
+		}
+		return art, fmt.Errorf("成果物を確認できません: %w", err)
+	}
+	if info.IsDir() {
+		return art, fmt.Errorf("成果物がディレクトリです: %s", path)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return art, fmt.Errorf("成果物を開けません: %w", err)
+	}
+	defer f.Close()
+	h := sha256.New()
+	n, err := io.Copy(h, f)
+	if err != nil {
+		return art, fmt.Errorf("成果物を読めません: %w", err)
+	}
+	art.Exists = true
+	art.ModTime = info.ModTime()
+	art.Size = n
+	copy(art.Sum[:], h.Sum(nil))
+	return art, nil
+}
+
+// Changed は実行後の成果物が、実行前と違う内容か新しい更新時刻を持つかを返す。
+// 内容も更新時刻も同じファイルは、今回の計測結果としては受け取らない。
+func Changed(before, after Artifact) bool {
+	if !after.Exists {
+		return false
+	}
+	if !before.Exists {
+		return true
+	}
+	if before.Sum != after.Sum || before.Size != after.Size {
+		return true
+	}
+	return after.ModTime.After(before.ModTime)
 }
 
 // ReadScore は明示された JSON スコアファイルを読む。ファイルが無ければ ok=false。

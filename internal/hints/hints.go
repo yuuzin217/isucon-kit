@@ -13,6 +13,25 @@ type Item struct {
 	Detail string `json:"detail"`
 }
 
+// FromLeaders は指標ごとの先頭だけから確認ポイントを作る。渡す値は全体の最大である。
+func FromLeaders(total, avg, count *model.EndpointStat, query *model.QueryStat) []Item {
+	var endpoints []model.EndpointStat
+	if total != nil {
+		endpoints = append(endpoints, *total)
+	}
+	if avg != nil {
+		endpoints = append(endpoints, *avg)
+	}
+	if count != nil {
+		endpoints = append(endpoints, *count)
+	}
+	var queries []model.QueryStat
+	if query != nil {
+		queries = append(queries, *query)
+	}
+	return FromStats(endpoints, queries)
+}
+
 // FromStats は上位の API と SQL から確認ポイントを最大3件返す。
 func FromStats(endpoints []model.EndpointStat, queries []model.QueryStat) []Item {
 	var out []Item
