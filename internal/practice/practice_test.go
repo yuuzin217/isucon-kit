@@ -143,25 +143,12 @@ func TestMakeTimeoutKillsRecipeChildren(t *testing.T) {
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if !childAlive(pid) {
+		if !command.ProcessAlive(pid) {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("make の子プロセス %d が残っています", pid)
-}
-
-func childAlive(pid int) bool {
-	data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
-	if err != nil {
-		return false
-	}
-	text := string(data)
-	i := strings.LastIndex(text, ")")
-	if i < 0 || i+2 >= len(text) {
-		return true
-	}
-	return text[i+2] != 'Z'
 }
 
 func TestReadScore(t *testing.T) {

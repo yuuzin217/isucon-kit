@@ -278,6 +278,10 @@ func (s *server) runLocal(ctx context.Context, done func()) {
 		Make:    local.Make,
 		Target:  target,
 		Timeout: timeout,
+		OnLog: func(text string) {
+			ex.Log = store.RedactLog(text)
+			_ = s.st.SaveExecution(ex)
+		},
 	})
 	ex.Log = store.RedactLog(log)
 	if err != nil {

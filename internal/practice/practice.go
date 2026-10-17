@@ -28,6 +28,8 @@ type Spec struct {
 	Make    string
 	Target  string
 	Timeout time.Duration
+	// OnLog は実行中の出力を受け取る。nil なら通知しない。成功判定には使わない。
+	OnLog func(string)
 }
 
 // ScoreRecord は練習側が書き出す明示的なスコアファイルである。
@@ -86,20 +88,11 @@ func Run(ctx context.Context, runner command.Runner, spec Spec) (string, error) 
 	var truncated bool
 	var runErr error
 	if _, ok := runner.(command.OSRunner); ok {
-		stdout, stderr, truncated, runErr = command.RunGroup(ctx, name, command.MaxCaptureBytes, args...)
+		stdout, stderr, truncated, runErr = command.RunGroupProgress(ctx, name, command.MaxCaptureBytes, spec.OnLog, args...)
 	} else {
 		stdout, stderr, runErr = runner.Run(ctx, name, args...)
 	}
-	log := string(stdout)
-	if len(stderr) > 0 {
-		if log != "" && !strings.HasSuffix(log, "\n") {
-			log += "\n"
-		}
-		log += string(stderr)
-	}
-	if truncated {
-		log += "\n…出力が上限を超えたため以降を捨てました…\n"
-	}
+	log := command.FormatOutput(stdout, stderr, truncated)
 	if runErr != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return log, fmt.Errorf("計測がタイムアウトしました: %w", ctx.Err())
