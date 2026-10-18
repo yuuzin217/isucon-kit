@@ -228,13 +228,13 @@ async function main() {
   }
   await waitFor("document.getElementById('score-value') && document.getElementById('score-value').textContent === '180'");
   const labels = await evalValue("document.body.innerText");
-  if (!labels.includes("遅いAPI") || !labels.includes("合計処理時間") || !labels.includes("ローカル練習") || labels.includes("ランキング基準")) {
+  if (!labels.includes("遅いAPI") || !labels.includes("合計処理時間") || !labels.includes("計測履歴") || labels.includes("ランキング基準")) {
     throw new Error("日本語の表示が足りません: " + labels.slice(0, 500));
   }
   await evalValue("document.getElementById('api-search').value = 'no-such-route'; document.getElementById('api-search').dispatchEvent(new Event('input')); true");
   await waitFor("document.getElementById('endpoint-state').textContent.includes('該当する行はありません')");
   await evalValue("document.getElementById('api-limit').value = '10'; document.getElementById('api-sort').value = 'count'; document.getElementById('api-order').value = 'asc'; document.getElementById('api-search').value = '/old'; document.getElementById('api-search').dispatchEvent(new Event('input')); true");
-  await waitFor("document.getElementById('endpoint-body').innerText.includes('/old') && document.getElementById('endpoint-body').innerText.includes('ミリ秒')");
+  await waitFor("document.getElementById('endpoint-body').innerText.includes('/old') && document.getElementById('endpoint-body').innerText.includes('0.250')");
   await evalValue("document.getElementById('run-select').value = 'run-old'; document.getElementById('run-select').dispatchEvent(new Event('change')); true");
   await waitFor("document.getElementById('score-value').textContent === '100'");
   await evalValue("document.getElementById('base-select').value = 'run-new'; document.getElementById('base-select').dispatchEvent(new Event('change')); true");
@@ -250,9 +250,9 @@ async function main() {
   await sleep(300);
   await waitFor("document.getElementById('score-value').textContent === '100' && document.getElementById('run-select').value === 'run-old' && document.getElementById('base-select').value === '' && document.getElementById('score-delta').textContent === '-' && document.getElementById('endpoint-diff-wrap').hidden === true");
   await evalValue("document.getElementById('mode-local').click(); true");
-  await waitFor("document.getElementById('mode-label').textContent.includes('ローカル練習') && document.getElementById('empty').hidden === false && document.getElementById('primary-action').textContent === '計測実行'");
+  await waitFor("document.getElementById('mode-label').textContent.includes('ローカル環境') && document.getElementById('empty').hidden === false && document.getElementById('primary-action').textContent.includes('計測実行')");
   await evalValue("document.getElementById('mode-remote').click(); true");
-  await waitFor("document.getElementById('score-value').textContent === '180' && document.getElementById('mode-label').textContent.includes('リモート') && document.getElementById('primary-action').textContent === 'ログ収集・解析'");
+  await waitFor("document.getElementById('score-value').textContent === '180' && document.getElementById('mode-label').textContent.includes('リモート') && document.getElementById('primary-action').textContent.includes('ログ収集・解析')");
   if (ver.Browser === "") {
     throw new Error("browser version empty");
   }

@@ -53,7 +53,25 @@ async function postJSON(url, payload) {
 }
 
 function scoreText(score) {
-  return score == null ? "未計測" : String(score);
+  if (score == null) return "未計測";
+  return Number(score).toLocaleString("ja-JP");
+}
+
+function formatWhen(iso) {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const p = (n) => String(n).padStart(2, "0");
+  return d.getUTCFullYear() + "/" + p(d.getUTCMonth() + 1) + "/" + p(d.getUTCDate()) + " " + p(d.getUTCHours()) + ":" + p(d.getUTCMinutes());
+}
+
+function shortID(id) {
+  if (!id) return "-";
+  return id.length > 8 ? id.slice(0, 8) + "..." : id;
+}
+
+function countText(n) {
+  return Number(n || 0).toLocaleString("ja-JP");
 }
 
 function statusText(status) {
@@ -79,8 +97,7 @@ function totalLabel(n) {
 }
 
 function avgLabel(n) {
-  if (n == null || Number.isNaN(Number(n))) return "-";
-  return (Number(n) * 1000).toFixed(1) + " ミリ秒";
+  return seconds(n);
 }
 
 function setVisible(id, on) {
@@ -157,10 +174,51 @@ function renderRuns() {
   });
   const recent = el("recent");
   recent.replaceChildren();
-  runs.slice(0, 5).forEach((run) => {
-    const li = document.createElement("li");
-    text(li, (run.label || "計測") + " / " + scoreText(run.score) + " / " + statusText(run.benchmark_status));
-    recent.appendChild(li);
+  runs.slice(0, 4).forEach((run, index) => {
+    const older = runs[index + 1];
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "history-item" + (index === 0 ? " latest" : "");
+    const when = document.createElement("div");
+    when.className = "when";
+    text(when, formatWhen(run.created_at));
+    const points = document.createElement("div");
+    points.className = "points";
+    text(points, scoreText(run.score));
+    const pill = document.createElement("span");
+    pill.className = "status-pill status-" + (run.benchmark_status || "unknown");
+    text(pill, statusText(run.benchmark_status));
+    const top = document.createElement("div");
+    top.style.display = "flex";
+    top.style.gap = "8px";
+    top.style.alignItems = "center";
+    top.append(points, pill);
+    if (index === 0) {
+      const mark = document.createElement("span");
+      mark.className = "badge-new";
+      text(mark, "最新");
+      top.append(mark);
+    }
+    const sub = document.createElement("div");
+    sub.className = "sub";
+    text(sub, shortID(run.id));
+    if (older && run.score != null && older.score != null) {
+      const delta = run.score - older.score;
+      const d = document.createElement("span");
+      d.className = "delta " + (delta > 0 ? "up" : delta < 0 ? "down" : "");
+      let label = (delta > 0 ? "+" : "") + delta.toLocaleString("ja-JP");
+      if (older.score !== 0) label += " (" + (delta > 0 ? "+" : "") + ((delta / older.score) * 100).toFixed(1) + "%)";
+      text(d, label);
+      sub.append(document.createTextNode(" "), d);
+    }
+    btn.append(when, top, sub);
+    btn.addEventListener("click", () => {
+      const sel = el("run-select");
+      if (!sel) return;
+      sel.value = run.id;
+      sel.dispatchEvent(new Event("change"));
+    });
+    recent.appendChild(btn);
   });
 }
 
@@ -219,33 +277,100 @@ async function renderRank(kind) {
   if (state.pages[kind] >= pageCount) state.pages[kind] = pageCount - 1;
   const orderLabel = key === "count" ? (order === "asc" ? "少ない順" : "多い順") : (order === "asc" ? "短い順" : "長い順");
   const keyLabel = key === "avg" ? "平均処理時間" : key === "count" ? "呼び出し回数" : "合計処理時間";
+  const lead = el(isAPI ? "api-lead" : "sql-lead");
   if (!view.length) {
     text(el(stateId), "該当する行はありません");
+    text(lead, "該当する行はありません。");
   } else {
     const from = offset + 1;
     const to = offset + view.length;
-    text(el(stateId), keyLabel + "の" + orderLabel + "（全" + total + "件中 " + from + "–" + to + "件）");
+    text(el(stateId), "全 " + total + " 件中 " + from + "-" + to + " 件を表示");
+    text(lead, keyLabel + "の" + orderLabel + "です。原因の断定ではありません。");
   }
-  view.forEach((row) => {
+  view.forEach((row, index) => {
+    const tr = document.createElement("tr");
+    tr.appendChild(cellOf(rankBadge(offset + index + 1)));
     if (isAPI) {
-      addRow(bodyId, [
-        row.method || "",
-        row.route || "",
-        { num: String(row.count ?? 0) },
-        { num: totalLabel(row.total_seconds) },
-        { num: avgLabel(row.avg_seconds) },
-      ], 1);
+      tr.appendChild(cellOf(methodBadge(row.method || "")));
+      tr.appendChild(textCell(row.route || "", "wrap"));
     } else {
-      addRow(bodyId, [
-        row.fingerprint || "",
-        { num: String(row.count ?? 0) },
-        { num: totalLabel(row.total_seconds) },
-        { num: avgLabel(row.avg_seconds) },
-      ], 0);
+      tr.appendChild(textCell(row.fingerprint || "", "wrap"));
     }
+    tr.appendChild(textCell(countText(row.count), "num"));
+    tr.appendChild(textCell(seconds(row.total_seconds), "num"));
+    tr.appendChild(textCell(seconds(row.avg_seconds), "num"));
+    if (isAPI) tr.appendChild(textCell(row.p95_seconds == null ? "-" : seconds(row.p95_seconds), "num"));
+    tr.appendChild(cellOf(hintPill(row)));
+    el(bodyId).appendChild(tr);
   });
   pager.hidden = total <= pageSize;
   text(el(isAPI ? "api-page-label" : "sql-page-label"), (state.pages[kind] + 1) + " / " + pageCount);
+  fillPages(kind, pageCount);
+}
+
+function cellOf(node) {
+  const td = document.createElement("td");
+  td.appendChild(node);
+  return td;
+}
+
+function textCell(value, className) {
+  const td = document.createElement("td");
+  if (className) td.className = className;
+  text(td, value);
+  return td;
+}
+
+function rankBadge(n) {
+  const span = document.createElement("span");
+  span.className = "rank" + (n <= 3 ? " rank-" + n : "");
+  text(span, n);
+  return span;
+}
+
+function methodBadge(method) {
+  const span = document.createElement("span");
+  span.className = "method";
+  text(span, method || "-");
+  return span;
+}
+
+function hintPill(row) {
+  const span = document.createElement("span");
+  const count = Number(row.count || 0);
+  const avg = Number(row.avg_seconds);
+  if (count >= 20) {
+    span.className = "hint-pill hot";
+    text(span, "呼び出し回数が多い");
+  } else if (!Number.isNaN(avg) && avg >= 0.05) {
+    span.className = "hint-pill warm";
+    text(span, "平均処理時間が長い");
+  } else {
+    span.className = "hint-empty";
+    text(span, "-");
+  }
+  return span;
+}
+
+function fillPages(kind, pageCount) {
+  const box = el(kind === "api" ? "api-pages" : "sql-pages");
+  if (!box) return;
+  box.replaceChildren();
+  const width = 5;
+  let start = Math.max(0, state.pages[kind] - 2);
+  let end = Math.min(pageCount, start + width);
+  start = Math.max(0, end - width);
+  for (let i = start; i < end; i++) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "page-num" + (i === state.pages[kind] ? " on" : "");
+    text(b, i + 1);
+    b.addEventListener("click", () => {
+      state.pages[kind] = i;
+      renderRank(kind).catch((err) => showError(err.message));
+    });
+    box.appendChild(b);
+  }
 }
 
 async function renderDetail(detail) {
@@ -254,10 +379,17 @@ async function renderDetail(detail) {
   state.current = detail;
   const run = detail.run;
   text(el("run-meta"), "選択中: " + (run.label || run.id) + " / " + run.created_at);
-  text(el("score-time"), "計測日時: " + (run.created_at || "-"));
+  text(el("score-time"), formatWhen(run.created_at));
+  text(el("run-id"), shortID(run.id));
+  const copy = el("copy-run");
+  if (copy) copy.dataset.id = run.id || "";
   text(el("log-range"), run.collection_scope ? "ログ範囲: " + run.collection_scope : "");
-  text(el("score-value"), scoreText(run.score));
-  text(el("score-status"), statusText(run.benchmark_status));
+  const value = el("score-value");
+  text(value, scoreText(run.score));
+  value.classList.toggle("is-empty", run.score == null);
+  const pill = el("score-status");
+  text(pill, statusText(run.benchmark_status));
+  pill.className = "status-pill status-" + (run.benchmark_status || "unknown");
   text(el("score-note"), run.note ? "メモ: " + run.note : "");
   text(el("endpoint-state"), "");
   text(el("query-state"), "");
@@ -276,8 +408,15 @@ function resetCompareTables() {
   el("query-diff-wrap").hidden = true;
   text(el("endpoint-compare"), "");
   text(el("query-compare"), "");
-  text(el("score-percent"), "-");
+  setPercent("-");
   text(el("score-base"), "-");
+}
+
+function setPercent(value) {
+  const node = el("score-percent");
+  const show = value && value !== "-";
+  text(node, show ? value : "");
+  if (node) node.hidden = !show;
 }
 
 function showDiff(wrapId, bodyId, rows, cellsFor) {
@@ -299,7 +438,7 @@ async function renderCompare() {
   }
   const cmp = await getJSON("/api/compare?base=" + encodeURIComponent(state.baseID) + "&head=" + encodeURIComponent(state.current.run.id));
   const pct = cmp.score_percent === "N/A" ? "N/A" : cmp.score_percent + "%";
-  text(el("score-percent"), pct);
+  setPercent(pct);
   if (cmp.score_delta == null) {
     text(el("score-delta"), "N/A");
   } else {
@@ -372,14 +511,27 @@ async function loadHints(id) {
 }
 
 function applyModeChrome() {
-  text(el("mode-label"), "モード: " + modeText(state.mode));
-  el("mode-local").classList.toggle("active", state.mode === "local");
-  el("mode-remote").classList.toggle("active", state.mode === "remote");
-  const button = el("primary-action");
-  text(button, state.mode === "local" ? "計測実行" : "ログ収集・解析");
-  button.disabled = !state.executionEnabled || state.executionStatus === "running";
+  const local = state.mode === "local";
+  text(el("mode-label"), local ? "ローカル環境" : "リモート");
+  el("mode-local").classList.toggle("active", local);
+  el("mode-remote").classList.toggle("active", !local);
+  const label = local ? "計測実行" : "ログ収集・解析";
+  const running = state.executionStatus === "running";
+  text(el("primary-label"), running ? "実行中" : label);
+  text(el("side-label"), running ? "実行中" : label);
+  text(el("primary-sub"), local ? "ベンチマーク → ログ収集 → 解析まで自動実行" : "SSHでログを収集し、手元で解析します");
+  text(el("side-lead"), local ? "ベンチマークの実行からログ収集・解析までを自動で行います。" : "リモートのログを収集し、手元で解析します。");
+  const busy = !state.executionEnabled || running;
+  el("primary-action").disabled = busy;
+  const side = el("side-action");
+  if (side) side.disabled = busy;
   el("exec-disabled").hidden = state.executionEnabled;
   el("hosts-panel").hidden = state.mode !== "remote";
+  const steps = el("guide");
+  if (steps) {
+    const first = steps.querySelector("li p");
+    if (first) text(first, local ? "「計測実行」ボタンでベンチマークを実行" : "「ログ収集・解析」ボタンでログを取得");
+  }
 }
 
 function renderExecution(ex) {
@@ -535,14 +687,33 @@ async function switchMode(mode) {
 }
 el("mode-local").addEventListener("click", () => { switchMode("local").catch((err) => showError(err.message)); });
 el("mode-remote").addEventListener("click", () => { switchMode("remote").catch((err) => showError(err.message)); });
-el("primary-action").addEventListener("click", async () => {
+async function startAction() {
+  if (el("primary-action").disabled) return;
   try {
     showError("");
     const path = state.mode === "local" ? "/api/actions/local-cycle" : "/api/actions/remote-collect";
+    el("primary-action").disabled = true;
+    if (el("side-action")) el("side-action").disabled = true;
     await postJSON(path, {});
     renderExecution({ status: "running", step: "開始しました", elapsed_seconds: 0 });
   } catch (err) {
     showError(err.message);
+    applyModeChrome();
+  }
+}
+el("primary-action").addEventListener("click", () => { startAction(); });
+el("side-action").addEventListener("click", () => { startAction(); });
+el("see-all").addEventListener("click", () => {
+  const tab = document.querySelector('.tab[data-tab="history"]');
+  if (tab) tab.click();
+});
+el("copy-run").addEventListener("click", async () => {
+  const id = el("copy-run").dataset.id || "";
+  if (!id) return;
+  try {
+    await navigator.clipboard.writeText(id);
+  } catch (err) {
+    showError("実行IDをコピーできませんでした");
   }
 });
 el("score-form").addEventListener("submit", async (ev) => {
@@ -564,7 +735,8 @@ setInterval(() => {
   if (state.executionStatus !== "running") return;
   getJSON("/api/execution").then((ex) => {
     renderExecution(ex);
-    if (ex.status !== "running") loadAll().catch(() => {});
+    const auto = el("auto-refresh");
+    if (ex.status !== "running" && (!auto || auto.checked)) loadAll().catch(() => {});
   }).catch(() => {});
 }, 2000);
 
