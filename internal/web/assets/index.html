@@ -41,14 +41,14 @@
       <main>
         <section id="score" class="card score-card">
           <div class="score-col">
-            <div class="kicker">現在のスコア <span class="info" title="記録されたスコアです。未計測と0点は別です。">?</span></div>
+            <div class="kicker"><span id="score-current-label">現在のスコア</span> <span class="info" title="最新の計測なら現在のスコア、過去の計測を開いているときは選択中のスコアです。">?</span></div>
             <div class="score-main">
               <strong id="score-value">未計測</strong>
               <span id="score-status" class="status-pill status-unknown">未計測</span>
             </div>
           </div>
           <div class="score-col">
-            <div class="kicker">前回のスコア</div>
+            <div class="kicker" id="score-base-label">前回のスコア</div>
             <strong id="score-base" class="score-sub">-</strong>
           </div>
           <div class="score-col">

@@ -227,6 +227,9 @@ async function main() {
     throw new Error("timeout: " + expression + "\\n" + body);
   }
   await waitFor("document.getElementById('score-value') && document.getElementById('score-value').textContent === '180'");
+  await waitFor("document.getElementById('score-time').textContent === '2026/10/09 10:00' && document.getElementById('score-current-label').textContent === '現在のスコア' && document.getElementById('score-base-label').textContent === '比較元のスコア'");
+  const boundary = await evalValue("window.__isuconFormatWhen('2026-10-15T15:30:00Z')");
+  if (boundary !== "2026/10/16 00:30") throw new Error("日本時間の日付境界: " + boundary);
   const labels = await evalValue("document.body.innerText");
   if (!labels.includes("遅いAPI") || !labels.includes("合計処理時間") || !labels.includes("計測履歴") || labels.includes("ランキング基準")) {
     throw new Error("日本語の表示が足りません: " + labels.slice(0, 500));
@@ -236,7 +239,7 @@ async function main() {
   await evalValue("document.getElementById('api-limit').value = '10'; document.getElementById('api-sort').value = 'count'; document.getElementById('api-order').value = 'asc'; document.getElementById('api-search').value = '/old'; document.getElementById('api-search').dispatchEvent(new Event('input')); true");
   await waitFor("document.getElementById('endpoint-body').innerText.includes('/old') && document.getElementById('endpoint-body').innerText.includes('0.250')");
   await evalValue("document.getElementById('run-select').value = 'run-old'; document.getElementById('run-select').dispatchEvent(new Event('change')); true");
-  await waitFor("document.getElementById('score-value').textContent === '100'");
+  await waitFor("document.getElementById('score-value').textContent === '100' && document.getElementById('score-current-label').textContent === '選択中のスコア' && document.getElementById('score-base-label').textContent === '比較元のスコア'");
   await evalValue("document.getElementById('base-select').value = 'run-new'; document.getElementById('base-select').dispatchEvent(new Event('change')); true");
   await waitFor("document.getElementById('endpoint-diff-body').innerText.includes('/old') && document.getElementById('endpoint-diff-body').innerText.includes('0.750') && document.getElementById('query-diff-body').innerText.includes('select a')");
   await evalValue("document.getElementById('refresh').click(); true");
@@ -249,6 +252,19 @@ async function main() {
   await evalValue("document.getElementById('refresh').click(); true");
   await sleep(300);
   await waitFor("document.getElementById('score-value').textContent === '100' && document.getElementById('run-select').value === 'run-old' && document.getElementById('base-select').value === '' && document.getElementById('score-delta').textContent === '-' && document.getElementById('endpoint-diff-wrap').hidden === true");
+  await evalValue("document.getElementById('run-select').value = 'run-new'; document.getElementById('run-select').dispatchEvent(new Event('change')); true");
+  await waitFor("document.getElementById('score-value').textContent === '180'");
+  await evalValue("document.getElementById('base-select').value = 'run-bad'; document.getElementById('base-select').dispatchEvent(new Event('change')); true");
+  await waitFor("document.getElementById('score-current-label').textContent === '現在のスコア' && document.getElementById('score-base-label').textContent === '前回のスコア'");
+  async function scoreFills(width) {
+    await send("Emulation.setDeviceMetricsOverride", { width: width, height: 844, deviceScaleFactor: 1, mobile: width < 800 });
+    await sleep(200);
+    const box = await evalValue("(() => { const card = document.getElementById('score'); const col = card.querySelector('.score-col'); const cw = card.clientWidth; const colw = col.getBoundingClientRect().width; return { cw: cw, colw: colw, overflow: document.documentElement.scrollWidth > window.innerWidth + 1 }; })()");
+    if (!(box.colw >= box.cw * 0.9) || box.overflow) throw new Error(width + "px のスコア列: " + JSON.stringify(box));
+  }
+  await scoreFills(390);
+  await scoreFills(768);
+  await send("Emulation.clearDeviceMetricsOverride");
   await evalValue("document.getElementById('mode-local').click(); true");
   await waitFor("document.getElementById('mode-label').textContent.includes('ローカル環境') && document.getElementById('empty').hidden === false && document.getElementById('primary-action').textContent.includes('計測実行')");
   await evalValue("document.getElementById('mode-remote').click(); true");

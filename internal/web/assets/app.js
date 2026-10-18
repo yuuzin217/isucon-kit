@@ -61,8 +61,35 @@ function formatWhen(iso) {
   if (!iso) return "-";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  const p = (n) => String(n).padStart(2, "0");
-  return d.getUTCFullYear() + "/" + p(d.getUTCMonth() + 1) + "/" + p(d.getUTCDate()) + " " + p(d.getUTCHours()) + ":" + p(d.getUTCMinutes());
+  const parts = new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(d);
+  const get = (type) => parts.find((part) => part.type === type).value;
+  return get("year") + "/" + get("month") + "/" + get("day") + " " + get("hour") + ":" + get("minute");
+}
+window.__isuconFormatWhen = formatWhen;
+
+function updateScoreLabels() {
+  const currentLabel = el("score-current-label");
+  const baseLabel = el("score-base-label");
+  const current = state.current && state.current.run;
+  const runs = state.runs || [];
+  if (!current) {
+    text(currentLabel, "現在のスコア");
+    text(baseLabel, "前回のスコア");
+    return;
+  }
+  const isLatest = runs.length > 0 && runs[0].id === current.id;
+  const index = runs.findIndex((run) => run.id === current.id);
+  const previous = index >= 0 ? runs[index + 1] : null;
+  text(currentLabel, isLatest ? "現在のスコア" : "選択中のスコア");
+  text(baseLabel, previous && state.baseID === previous.id ? "前回のスコア" : "比較元のスコア");
 }
 
 function shortID(id) {
@@ -399,6 +426,7 @@ async function renderDetail(detail) {
   const empty = el("empty");
   if (empty) empty.hidden = true;
   loadHints(run.id);
+  updateScoreLabels();
 }
 
 function resetCompareTables() {
@@ -434,6 +462,7 @@ async function renderCompare() {
   resetCompareTables();
   if (!state.current || !state.baseID || state.baseID === state.current.run.id) {
     text(el("score-delta"), "-");
+    updateScoreLabels();
     return;
   }
   const cmp = await getJSON("/api/compare?base=" + encodeURIComponent(state.baseID) + "&head=" + encodeURIComponent(state.current.run.id));
@@ -444,6 +473,7 @@ async function renderCompare() {
   } else {
     text(el("score-delta"), String(cmp.score_delta));
   }
+  updateScoreLabels();
   const baseRun = (state.allRuns || state.runs).find((run) => run.id === cmp.base_id);
   text(el("score-base"), baseRun ? scoreText(baseRun.score) : "-");
   text(el("score-note"), "比較元: " + (baseRun ? scoreText(baseRun.score) + " / " + statusText(baseRun.benchmark_status) + " / " + (baseRun.created_at || "") : cmp.base_id) + (state.current.run.note ? " / メモ: " + state.current.run.note : ""));

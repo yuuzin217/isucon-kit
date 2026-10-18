@@ -21,7 +21,7 @@ button { cursor: pointer; }
 button:disabled { opacity: 0.55; cursor: not-allowed; }
 [hidden] { display: none !important; }
 .sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
-.shell { max-width: 1480px; margin: 0 auto; padding: 16px 28px 36px; }
+.shell { max-width: 1536px; margin: 0 auto; padding: 18px 22px 32px; }
 .fine { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; }
 
@@ -41,7 +41,7 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 .env-pill { display: inline-flex; align-items: center; gap: 6px; color: #607086; font-size: 13px; margin-left: 4px; white-space: nowrap; }
 .env-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
 
-.layout { display: grid; grid-template-columns: minmax(0, 1fr) 332px; gap: 16px; align-items: start; }
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 424px; gap: 20px; align-items: start; }
 .score-card { display: grid; grid-template-columns: 1.35fr 0.9fr 0.9fr 1fr; align-items: center; padding: 8px 8px 12px; margin-bottom: 16px; }
 .score-col { padding: 16px 22px; border-right: 1px solid var(--line); min-width: 0; }
 .score-extra { display: none; grid-column: 1 / -1; padding: 0 22px 8px; }
@@ -138,8 +138,9 @@ ul { margin: 0; padding-left: 1.1rem; }
 
 @media (max-width: 1100px) {
   .shell { padding: 12px; }
-  .layout, .score-card, .panel-head, .topbar { display: flex; flex-direction: column; }
-  .score-col { border-right: 0; border-bottom: 1px solid var(--line); padding: 12px 8px; }
+  .layout, .score-card, .panel-head, .topbar { display: flex; flex-direction: column; align-items: stretch; }
+  .score-card { align-items: stretch; width: 100%; }
+  .score-col { width: 100%; max-width: none; border-right: 0; border-bottom: 1px solid var(--line); padding: 12px 8px; }
   .brand-title { white-space: normal; }
   .top-actions, .controls { width: 100%; }
   .btn-go { width: 100%; }
