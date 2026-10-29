@@ -26,8 +26,9 @@ echo "[deploy] restart: $SERVICE"
 sudo systemctl restart "$SERVICE"
 
 echo "[deploy] health check: $HEALTH_URL"
+# 1回の curl は接続2秒・全体5秒で打ち切る。全30回でも上限は約3分で、無期限に待つことはない
 for i in $(seq 1 30); do
-  if curl -fs -o /dev/null "$HEALTH_URL"; then
+  if curl -fs --connect-timeout 2 --max-time 5 -o /dev/null "$HEALTH_URL"; then
     echo "[deploy] OK"
     exit 0
   fi

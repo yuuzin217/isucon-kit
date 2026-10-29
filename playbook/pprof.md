@@ -29,7 +29,8 @@ Echo などフレームワークを使っている場合も、標準の `http.De
 
 ```bash
 # CPU プロファイル（30秒間サンプリング。ベンチ実行中に取る）
-go tool pprof http://localhost:6060/debug/pprof/profile?seconds=30
+# URL は必ずクォートする: `?` は zsh などでグロブ展開され no matches found になる
+go tool pprof 'http://localhost:6060/debug/pprof/profile?seconds=30'
 
 # ヒープ（メモリ確保の発生源）
 go tool pprof http://localhost:6060/debug/pprof/heap
