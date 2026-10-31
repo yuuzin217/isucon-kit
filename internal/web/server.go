@@ -575,6 +575,7 @@ func detailView(d report.Detail, limit int) map[string]any {
 	return map[string]any{
 		"run":            toRunView(d.Run),
 		"timing_basis":   d.Run.TimingBasis,
+		"sql_cumulative": report.HasPGStat(d.Sources),
 		"analysis_error": d.Run.AnalysisError,
 		"ranking":        "total_seconds desc",
 		"endpoint_limit": limit,

@@ -63,6 +63,15 @@ type Host struct {
 	AccessLogs []AccessLog `json:"access_logs"`
 	SlowLogs   []SlowLog   `json:"slow_logs"`
 	Services   []string    `json:"services"`
+	Postgres   *Postgres   `json:"postgres,omitempty"`
+}
+
+// Postgres opts into a fixed, read-only pg_stat_statements query over SSH.
+// Authentication uses the remote socket/.pgpass; credentials and SQL are not configurable.
+type Postgres struct {
+	Database string `json:"database"`
+	User     string `json:"user"`
+	Sudo     bool   `json:"sudo,omitempty"` // run psql as the postgres OS user
 }
 
 // AccessLog は Nginx アクセスログのパスと形式である。
@@ -250,6 +259,12 @@ func (f *File) Validate() error {
 		for j, svc := range h.Services {
 			if !serviceRe.MatchString(svc) {
 				return fmt.Errorf("ホスト %s の services[%d] %q が不正です", h.Name, j, svc)
+			}
+		}
+		if p := h.Postgres; p != nil {
+			name := regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
+			if !name.MatchString(p.Database) || !name.MatchString(p.User) {
+				return fmt.Errorf("ホスト %s の postgres.database/user は接続文字列ではなく英数字の名前を指定してください", h.Name)
 			}
 		}
 	}

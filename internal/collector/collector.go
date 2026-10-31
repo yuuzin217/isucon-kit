@@ -59,6 +59,7 @@ func Collect(ctx context.Context, st *store.Store, cfg *config.File, label strin
 	var files []manifestFile
 	okN, failN := 0, 0
 	idx := 0
+	var sqlScopes []string
 	for _, host := range cfg.Hosts {
 		for _, logf := range host.AccessLogs {
 			src, mf := fetchOne(ctx, runner, cfg, host, model.KindAccess, logf.Format, logf.Path, dir, runID, idx, now)
@@ -82,11 +83,30 @@ func Collect(ctx context.Context, st *store.Store, cfg *config.File, label strin
 				failN++
 			}
 		}
+		if host.Postgres != nil {
+			src, mf, scope := fetchPostgres(ctx, runner, cfg, host, dir, runID, idx, now)
+			idx++
+			sources = append(sources, src)
+			files = append(files, mf)
+			if src.Status == model.SourceOK {
+				okN++
+				sqlScopes = append(sqlScopes, scope)
+			} else {
+				failN++
+			}
+		}
 	}
 	if len(sources) == 0 {
 		return Result{}, fmt.Errorf("収集対象のログが設定されていません")
 	}
-	return finish(st, runID, label, ScopeTail, now, sources, files, okN, failN, dir)
+	scope := ScopeTail
+	if len(sqlScopes) > 0 {
+		if anyTruncated(sources) {
+			scope += "（切り詰めあり）"
+		}
+		scope += "; " + strings.Join(sqlScopes, "; ")
+	}
+	return finish(st, runID, label, scope, now, sources, files, okN, failN, dir)
 }
 
 // Import はローカルログをファイル全体としてスナップショットへコピーする。SSH は使わない。

@@ -266,7 +266,27 @@ SSH の例です。鍵ファイルの中身は JSON に書きません。
 ]
 ```
 
-`ssh` は `BatchMode=yes`、`StrictHostKeyChecking=yes`、`known_hosts` 検証です。パスワードは送りません。リモートコマンドは `stat` と `tail` だけで、sudo、設定変更、ログ削除、再起動、DB 更新はしません。
+`ssh` は `BatchMode=yes`、`StrictHostKeyChecking=yes`、`known_hosts` 検証です。パスワードは送りません。ログ取得は `stat` と `tail` を使い、設定変更、ログ削除、再起動、DB 更新はしません。下記のPostgreSQL収集を明示的に設定したホストだけ、固定の読み取りSQLも実行します。
+
+### PostgreSQLのSQLランキング
+
+PostgreSQL 14以降の `pg_stat_statements` を、DBホストのSSH経由で読み取れます。MySQLの `slow_logs` とは別に、ホストへ次を追加します。同じDBを複数のアプリホストから重複収集しないでください。
+
+```json
+"postgres": {
+  "database": "app",
+  "user": "stats_reader",
+  "sudo": false
+}
+```
+
+リモートに `psql` があり、対象DBで `pg_stat_statements` が有効であることが前提です。SQL本文を参照するDBユーザーには必要に応じて `pg_read_all_stats` 権限を別途設定してください。認証はリモートのソケット認証または `.pgpass` を使います。kitの設定にはパスワードや接続文字列を保存しません。
+
+既存の権限で必要な場合だけ `sudo: true` にすると、固定の `sudo -n -u postgres` でpsqlを起動します。既定はfalseで、任意のコマンドやsudo先ユーザーは指定できません。収集SQLは読み取り専用・10秒のstatement timeout付きです。拡張作成、権限変更、統計リセットは行いません。
+
+「ログ収集・解析」でSQLランキングに呼出回数・合計/平均実行時間を表示します。時間はPostgreSQLのミリ秒を秒へ変換したもので、計画時間やアプリとの通信時間は含みません。SQLの文字列・数値リテラルとコメントは保存前に除去します。権限不足、不正なJSON、取得上限超過は0件成功ではなく収集失敗として残します。
+
+これは**統計リセット以降の累積値**で、ベンチマーク1回分ではありません。画面のログ範囲にリセット時刻・収集時刻（UTC）を表示します。累積統計を含むrun間のSQL差分比較は無効にし、アクセスログ側の比較は従来どおり行います。過去の未収集runには遡及しないため、設定後に新しく収集してください。統計の定義は[PostgreSQL公式ドキュメント](https://www.postgresql.org/docs/16/pgstatstatements.html)を参照してください。
 
 ## 計測実行を有効にする
 

@@ -80,7 +80,7 @@ const helpText = `isucon-kit は ISUCON 用の読み取り専用ログ分析ツ�
   isucon-kit verify
 
 --config を省略するとカレントディレクトリの isucon-kit.json を読みます。
-serve は 127.0.0.1 だけを待ち受けます。ログの削除、再起動、SQL 実行はしません。
+serve は 127.0.0.1 だけを待ち受けます。ログの削除、再起動、DB 更新はしません。
 `
 
 func cmdInit(args []string, stdout, stderr io.Writer) int {

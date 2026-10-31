@@ -420,6 +420,7 @@ async function renderDetail(detail) {
   text(el("score-note"), run.note ? "メモ: " + run.note : "");
   text(el("endpoint-state"), "");
   text(el("query-state"), "");
+  text(el("query-scope"), detail.sql_cumulative ? "PostgreSQL: 統計リセット以降の累積実行時間（ベンチ1回分ではありません）。集計期間は上のログ範囲を参照してください。" : "");
   await renderRank("api");
   await renderRank("sql");
   ["score", "analysis"].forEach((id) => setVisible(id, true));

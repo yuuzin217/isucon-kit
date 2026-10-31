@@ -21,6 +21,17 @@ func TestScoreZeroIsNotUnmeasured(t *testing.T) {
 	}
 }
 
+func TestCumulativePostgresIsNotBenchmarkDiff(t *testing.T) {
+	base := Detail{Run: model.Run{ID: "base", SlowAnalysis: model.AnalysisOK}, Sources: []model.Source{{Kind: model.KindSlow, Format: model.FormatPGStat}}}
+	head := Detail{Run: model.Run{ID: "head", SlowAnalysis: model.AnalysisOK}}
+	for _, pair := range [][2]Detail{{base, head}, {head, base}, {base, base}} {
+		cmp := Compare(pair[0], pair[1])
+		if cmp.QueriesComparable || len(cmp.Queries) > 0 || !strings.Contains(cmp.QueriesReason, "累積") {
+			t.Fatalf("misleading diff: %+v", cmp)
+		}
+	}
+}
+
 func TestPercentZeroDivision(t *testing.T) {
 	baseZero, head := 0, 10
 	cmp := Compare(

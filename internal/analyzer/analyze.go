@@ -4,6 +4,7 @@ package analyzer
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/yuuzin217/isucon-kit/internal/config"
 	"github.com/yuuzin217/isucon-kit/internal/model"
 	"github.com/yuuzin217/isucon-kit/internal/normalize"
+	"github.com/yuuzin217/isucon-kit/internal/pgstat"
 	"github.com/yuuzin217/isucon-kit/internal/store"
 )
 
@@ -93,6 +95,28 @@ func Analyze(ctx context.Context, st *store.Store, cfg *config.File, runID strin
 			accessOK = true
 		case model.KindSlow:
 			slowSeen = true
+			if src.Format == model.FormatPGStat {
+				body, err := os.ReadFile(path)
+				if err == nil {
+					var snapshot *pgstat.Snapshot
+					snapshot, err = pgstat.Decode(body)
+					if err == nil {
+						queries = append(queries, snapshot.Stats()...)
+					}
+				}
+				if err != nil {
+					src.AnalysisStatus = model.AnalysisFailed
+					src.AnalysisError = err.Error()
+					slowFail = true
+					errs = append(errs, err.Error())
+				} else {
+					src.AnalysisStatus = model.AnalysisOK
+					src.AnalysisError = ""
+					slowOK = true
+					versions = append(versions, "PostgreSQL pg_stat_statements (ms→s)")
+				}
+				continue
+			}
 			fileCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 			got, ver, err := ptdigest.Run(fileCtx, runner, path)
 			cancel()

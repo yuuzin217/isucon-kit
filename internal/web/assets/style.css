@@ -85,6 +85,7 @@ table { width: 100%; border-collapse: collapse; }
 .rank-table td { padding: 11px 10px; border-bottom: 1px solid #f0f4f8; font-size: 13px; vertical-align: middle; }
 .rank-table td.num, .num { text-align: right; font-variant-numeric: tabular-nums; }
 td.wrap { word-break: break-word; }
+#panel-sql td.wrap { min-width: 280px; }
 .rank { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: #eef2f6; color: #64748b; font-size: 12px; font-weight: 750; }
 .rank-1 { background: #ef4444; color: #fff; }
 .rank-2 { background: #f97316; color: #fff; }

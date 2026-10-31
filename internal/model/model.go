@@ -29,9 +29,10 @@ const (
 	KindAccess = "access"
 	KindSlow   = "slow"
 
-	FormatJSON  = "json"
-	FormatLTSV  = "ltsv"
-	FormatMySQL = "mysql"
+	FormatJSON   = "json"
+	FormatLTSV   = "ltsv"
+	FormatMySQL  = "mysql"
+	FormatPGStat = "pg_stat_statements"
 
 	// ModeLegacy はモード導入前の履歴である。
 	ModeLegacy = "legacy"

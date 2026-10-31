@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -78,6 +79,21 @@ func TestRejectInvalid(t *testing.T) {
 	}
 	if _, err := Load(filepath.Join(dir, "missing.json")); err == nil || !strings.Contains(err.Error(), "init") {
 		t.Fatalf("未作成時の案内がありません: %v", err)
+	}
+}
+
+func TestPostgresConfigValidation(t *testing.T) {
+	for _, database := range []string{"app", "app-test", "host=other", "postgresql://user:secret@host/db", "-other", "app\nSELECT"} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		body := strings.Replace(string(Template()), `"slow_logs": []`, `"slow_logs": [], "postgres":{"database":`+strconv.Quote(database)+`,"user":"reader","sudo":true}`, 1)
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Load(path)
+		valid := database == "app" || database == "app-test"
+		if (err == nil) != valid {
+			t.Fatalf("database %q: %v", database, err)
+		}
 	}
 }
 

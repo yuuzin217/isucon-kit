@@ -63,6 +63,10 @@ func Compare(base, head Detail) CompareResult {
 	}
 	res.EndpointsComparable, res.EndpointsReason = comparable(base.Run.AccessAnalysis, head.Run.AccessAnalysis, "アクセスログ")
 	res.QueriesComparable, res.QueriesReason = comparable(base.Run.SlowAnalysis, head.Run.SlowAnalysis, "スローログ")
+	if HasPGStat(base.Sources) || HasPGStat(head.Sources) {
+		res.QueriesComparable = false
+		res.QueriesReason = "PostgreSQLは統計リセット以降の累積値です。ベンチ1回分ではないためSQL差分は比較しません"
+	}
 	if res.EndpointsComparable {
 		res.Endpoints = diffEndpoints(base.Endpoints, head.Endpoints)
 	}
@@ -70,6 +74,16 @@ func Compare(base, head Detail) CompareResult {
 		res.Queries = diffQueries(base.Queries, head.Queries)
 	}
 	return res
+}
+
+// HasPGStat distinguishes cumulative counters from individual slow-log events.
+func HasPGStat(sources []model.Source) bool {
+	for _, s := range sources {
+		if s.Kind == model.KindSlow && s.Format == model.FormatPGStat {
+			return true
+		}
+	}
+	return false
 }
 
 func comparable(base, head, label string) (bool, string) {
