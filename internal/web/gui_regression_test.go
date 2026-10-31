@@ -242,18 +242,23 @@ async function main() {
   await waitFor("document.getElementById('score-value').textContent === '100' && document.getElementById('score-current-label').textContent === '選択中のスコア' && document.getElementById('score-base-label').textContent === '比較元のスコア'");
   await evalValue("document.getElementById('base-select').value = 'run-new'; document.getElementById('base-select').dispatchEvent(new Event('change')); true");
   await waitFor("document.getElementById('endpoint-diff-body').innerText.includes('/old') && document.getElementById('endpoint-diff-body').innerText.includes('0.750') && document.getElementById('query-diff-body').innerText.includes('select a')");
-  await evalValue("document.getElementById('refresh').click(); true");
+  await evalValue("loadAll(); true");
   await sleep(300);
   await waitFor("document.getElementById('score-value').textContent === '100' && document.getElementById('run-select').value === 'run-old' && document.getElementById('endpoint-diff-body').innerText.includes('/old') && document.getElementById('base-select').value === 'run-new'");
   await evalValue("document.getElementById('base-select').value = 'run-bad'; document.getElementById('base-select').dispatchEvent(new Event('change')); true");
   await waitFor("document.getElementById('endpoint-compare').textContent.includes('比較不能') && document.getElementById('query-compare').textContent.includes('比較不能') && document.getElementById('endpoint-diff-wrap').hidden === true");
   await evalValue("document.getElementById('base-select').value = ''; document.getElementById('base-select').dispatchEvent(new Event('change')); true");
   await waitFor("document.getElementById('score-delta').textContent === '-' && document.getElementById('endpoint-diff-wrap').hidden === true && document.getElementById('endpoint-compare').textContent === ''");
-  await evalValue("document.getElementById('refresh').click(); true");
+  await evalValue("loadAll(); true");
   await sleep(300);
   await waitFor("document.getElementById('score-value').textContent === '100' && document.getElementById('run-select').value === 'run-old' && document.getElementById('base-select').value === '' && document.getElementById('score-delta').textContent === '-' && document.getElementById('endpoint-diff-wrap').hidden === true");
-  await evalValue("document.getElementById('run-select').value = 'run-new'; document.getElementById('run-select').dispatchEvent(new Event('change')); true");
-  await waitFor("document.getElementById('score-value').textContent === '180'");
+  await evalValue("document.getElementById('refresh').click(); true");
+  await waitFor("document.getElementById('score-value').textContent === '180' && document.getElementById('run-select').value === 'run-new'");
+  await evalValue("document.getElementById('run-select').value = 'run-old'; document.getElementById('run-select').dispatchEvent(new Event('change')); true");
+  await waitFor("document.getElementById('run-select').value === 'run-old' && document.getElementById('score-value').textContent === '100'");
+  await evalValue("window.originalFetch = window.fetch; window.fetch = (url, options) => url === '/api/execution' ? Promise.resolve(new Response(JSON.stringify({status: 'done', step: '完了'}), {status: 200})) : window.originalFetch(url, options); document.getElementById('auto-refresh').checked = true; renderExecution({status: 'running'}); true");
+  await waitFor("document.getElementById('score-value').textContent === '180' && document.getElementById('run-select').value === 'run-new'");
+  await evalValue("window.fetch = window.originalFetch; true");
   await evalValue("document.getElementById('base-select').value = 'run-bad'; document.getElementById('base-select').dispatchEvent(new Event('change')); true");
   await waitFor("document.getElementById('score-current-label').textContent === '現在のスコア' && document.getElementById('score-base-label').textContent === '前回のスコア'");
   async function scoreFills(width) {

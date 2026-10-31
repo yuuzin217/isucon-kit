@@ -578,7 +578,7 @@ function renderExecution(ex) {
   applyModeChrome();
 }
 
-async function loadAll() {
+async function loadAll({ latest = false } = {}) {
   showError("");
   const selected = state.current && state.current.run ? state.current.run.id : "";
   const baseID = state.baseID;
@@ -622,7 +622,7 @@ async function loadAll() {
       return;
     }
     const still = pool.some((run) => run.id === selected);
-    const id = still ? selected : pool[0].id;
+    const id = !latest && still ? selected : pool[0].id;
     const detail = await getJSON("/api/runs/" + encodeURIComponent(id));
     await renderDetail(detail);
     if (state.compareOff) {
@@ -642,7 +642,7 @@ async function loadAll() {
   }
 }
 
-el("refresh").addEventListener("click", () => { loadAll().catch((err) => showError(err.message)); });
+el("refresh").addEventListener("click", () => { loadAll({ latest: true }).catch((err) => showError(err.message)); });
 el("run-select").addEventListener("change", async (ev) => {
   try {
     showError("");
@@ -766,7 +766,7 @@ setInterval(() => {
   getJSON("/api/execution").then((ex) => {
     renderExecution(ex);
     const auto = el("auto-refresh");
-    if (ex.status !== "running" && (!auto || auto.checked)) loadAll().catch(() => {});
+    if (ex.status !== "running" && (!auto || auto.checked)) loadAll({ latest: true }).catch(() => {});
   }).catch(() => {});
 }, 2000);
 
